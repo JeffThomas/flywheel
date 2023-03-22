@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lexx::token::Token;
 
 use crate::instruction::Instruction;
@@ -13,8 +15,8 @@ pub trait Compiler: {
     fn compile(
         &self,
         ctx: &mut CompileContext,
-        next: Option<Box<dyn Instruction>>,
-    ) -> Result<Option<Box<dyn Instruction>>, CompileError>;
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError>;
     fn get_type(&self) -> u8;
     fn get_token(&self) -> Token;
     fn get_next(&self) -> Option<Box<dyn Compiler>>;

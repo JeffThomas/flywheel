@@ -276,6 +276,7 @@
 //! ```
 
 use std::alloc::alloc;
+use std::sync::Arc;
 
 use lexx::Lexxer;
 
@@ -351,13 +352,13 @@ fn main() {
             // the next instruction is used to build the instruction chain, it will contain
             // the next instruction that is to be executed after this one, this is important
             // because Instructions are immutable
-            next: Option<Box<dyn Instruction>>,
-        ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+            next: Option<Arc<dyn Instruction>>,
+        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
             // because this is a static integer, it is a Leaf node in the Compiler tree
             // that will be generated. We don't need to worry about the `left`, `right` or
             // `next` fields. We also aren't using the `compiler_type` which can be used for
             // pre-compile directives or optimizations
-            Ok(Some(Box::new(StaticIntInstruction {
+            Ok(Some(Arc::new(StaticIntInstruction {
                 value: self.token.value.parse::<i32>().unwrap(),
                 next,
             })))
@@ -390,15 +391,15 @@ fn main() {
         /// the integer value we represent
         pub value: i32,
         /// the next Instruction to be executed after this one
-        pub next: Option<Box<dyn Instruction>>,
+        pub next: Option<Arc<dyn Instruction>>,
     }
     impl Instruction for StaticIntInstruction {
         /// `execute` is the only function an Instruction has
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
             // the insert happens here
             ctx.stack.push(self.value);
             // return the next Instruction
-            Ok(self.next.as_ref())
+            Ok(self.next.clone())
         }
     }
 
@@ -461,14 +462,14 @@ fn main() {
         fn compile(
             &self,
             ctx: &mut CompileContext,
-            next: Option<Box<dyn Instruction>>,
-        ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+            next: Option<Arc<dyn Instruction>>,
+        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
             // the end results we want is a chain of instructions that look like
             // left->right->math->next->...
             // because we want these instances to be immutable we want to create them
             // with the linked one already existing: math, then right, then left
             // build the math instruction with the next instruction.
-            let m = Box::new(
+            let m = Arc::new(
                 MathInstruction {
                     instruction: self.token.value.chars().next().unwrap(),
                     next
@@ -508,10 +509,10 @@ fn main() {
         /// which math function are we
         pub instruction: char,
         /// the next Instruction in the chain
-        pub next: Option<Box<dyn Instruction>>,
+        pub next: Option<Arc<dyn Instruction>>,
     }
     impl Instruction for MathInstruction {
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
             // pull the values we're acting on from the stack.
             // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
             // fortunately the compiler will always provide consistent results
@@ -524,7 +525,7 @@ fn main() {
                 _   => {}
             }
             // return the next Instruction
-            Ok(self.next.as_ref())
+            Ok(self.next.clone())
         }
     }
 
@@ -561,7 +562,7 @@ fn main() {
     };
 
     let binding = compile_result.unwrap().unwrap();
-    let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> = Ok(Some(&binding));
+    let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(Some(binding));
 
     loop {
         match running_instruction {
@@ -583,6 +584,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
+    use std::sync::Arc;
 
     use lexx::input::InputString;
     use lexx::Lexx;
@@ -590,12 +592,12 @@ mod tests {
     use lexx::matcher_integer::IntegerMatcher;
     use lexx::matcher_symbol::SymbolMatcher;
     use lexx::matcher_whitespace::WhitespaceMatcher;
-    use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_SYMBOL};
+    use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_SYMBOL, TOKEN_TYPE_WHITESPACE};
 
-    use crate::TOKEN_TYPE_OPERATOR;
+    use crate::{eat_token_or_throw_error, TOKEN_TYPE_OPERATOR};
     use crate::compiler::{CompileContext, CompileError, Compiler};
     use crate::instruction::{ExecutionContext, Instruction};
-    use crate::parser::{ParseContext, Parser, PRECEDENCE_EOE, PRECEDENCE_PREFIX, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
+    use crate::parser::{ParseContext, Parser, PRECEDENCE_CALL, PRECEDENCE_EOE, PRECEDENCE_PREFIX, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
     use crate::parslet::{InfixParslet, PrefixParslet};
 
     #[test]
@@ -607,85 +609,85 @@ mod tests {
             /// the integer value we represent
             pub value: i32,
             /// the next Instruction to be executed after this one
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for StaticIntInstruction {
             /// `execute` is the only function an Instruction has
-            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 /// the insert happens here
                 ctx.stack.push(self.value);
                 /// return the next Instruction
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
 
         pub struct AddInstruction {
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for AddInstruction {
             fn execute(
                 &self,
                 ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 let right = ctx.stack.pop().unwrap();
                 let left = ctx.stack.pop().unwrap();
                 ctx.stack.push(left + right);
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
         pub struct SubtractInstruction {
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for SubtractInstruction {
             fn execute(
                 &self,
                 ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 let right = ctx.stack.pop().unwrap();
                 let left = ctx.stack.pop().unwrap();
                 ctx.stack.push(left - right);
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
         pub struct MultiplyInstruction {
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for MultiplyInstruction {
             fn execute(
                 &self,
                 ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 let right = ctx.stack.pop().unwrap();
                 let left = ctx.stack.pop().unwrap();
                 ctx.stack.push(left * right);
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
         pub struct DivideInstruction {
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for DivideInstruction {
             fn execute(
                 &self,
                 ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 let right = ctx.stack.pop().unwrap();
                 let left = ctx.stack.pop().unwrap();
                 ctx.stack.push(left / right);
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
         pub struct NegateInstruction {
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for NegateInstruction {
             fn execute(
                 &self,
                 ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 let right = ctx.stack.pop().unwrap();
                 ctx.stack.push(-right);
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
 
@@ -712,13 +714,13 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 let n = match self.next {
                     Some(ref n) => {n.compile(ctx, next)?}
                     None => {next}
                 };
-                Ok(Some(Box::new(StaticIntInstruction {
+                Ok(Some(Arc::new(StaticIntInstruction {
                     value: self.token.value.parse::<i32>().unwrap(),
                     next: n,
                 })))
@@ -747,17 +749,17 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 let n = match self.next {
                     Some(ref n) => {n.compile(ctx, next)?}
                     None => {next}
                 };
-                let i = Box::new(NegateInstruction {
+                let i = Arc::new(NegateInstruction {
                     next: n,
                 });
                 let r = self.right.as_ref().unwrap().compile(ctx, Some(i))?;
-                Ok(Some(r.unwrap()))
+                Ok(r)
             }
             fn get_type(&self) -> u8 { self.compiler_type }
             fn get_token(&self) -> Token { self.token.clone() }
@@ -800,18 +802,18 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 let n = match self.next {
                     Some(ref n) => {n.compile(ctx, next)?}
                     None => {next}
                 };
-                let i: Box<dyn Instruction> = match self.token.value.as_str() {
-                    "+" => { Box::new(AddInstruction { next: n } ) }
-                    "-" => { Box::new(SubtractInstruction { next: n } ) }
-                    "*" => { Box::new(MultiplyInstruction { next: n } ) }
-                    "/" => { Box::new(DivideInstruction { next: n } ) }
-                    _ => { Box::new(AddInstruction { next: n } ) } // this can (should) not happen
+                let i: Arc<dyn Instruction> = match self.token.value.as_str() {
+                    "+" => { Arc::new(AddInstruction { next: n } ) }
+                    "-" => { Arc::new(SubtractInstruction { next: n } ) }
+                    "*" => { Arc::new(MultiplyInstruction { next: n } ) }
+                    "/" => { Arc::new(DivideInstruction { next: n } ) }
+                    _ => { Arc::new(AddInstruction { next: n } ) } // this can (should) not happen
                 };
                 let r = self.right.as_ref().unwrap().compile(ctx, Some(i))?;
                 let l = self.left.as_ref().unwrap().compile(ctx, r)?;
@@ -919,8 +921,8 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 match self.next {
                     Some(ref n) => { n.compile(ctx, None) }
                     None => { Ok(next) }
@@ -1025,8 +1027,8 @@ mod tests {
         let mut ctx = ExecutionContext { stack: Vec::new() };
 
         let binding = compile_result.unwrap().unwrap();
-        let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> =
-            Ok(Some(&binding));
+        let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> =
+            Ok(Some(binding));
 
         loop {
             match running_instruction {
@@ -1114,13 +1116,13 @@ mod tests {
                 // the next instruction is used to build the instruction chain, it will contain
                 // the next instruction that is to be executed after this one, this is important
                 // because Instructions are immutable
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 // because this is a static integer, it is a Leaf node in the Compiler tree
                 // that will be generated. We don't need to worry about the `left`, `right` or
                 // `next` fields. We also aren't using the `compiler_type` which can be used for
                 // pre-compile directives or optimizations
-                Ok(Some(Box::new(StaticIntInstruction {
+                Ok(Some(Arc::new(StaticIntInstruction {
                     value: self.token.value.parse::<i32>().unwrap(),
                     next,
                 })))
@@ -1153,15 +1155,15 @@ mod tests {
             /// the integer value we represent
             pub value: i32,
             /// the next Instruction to be executed after this one
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for StaticIntInstruction {
             /// `execute` is the only function an Instruction has
-            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 // the insert happens here
                 ctx.stack.push(self.value);
                 // return the next Instruction
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
 
@@ -1180,7 +1182,9 @@ mod tests {
             // if `matcher` returns `true` then the `generator` function will be called to do the parsing
             matcher: |_ctx, token, precedence| {
                 if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_SYMBOL {true} else {false}
+                    && token.token_type == TOKEN_TYPE_SYMBOL
+                    && (token.value == "+" || token.value == "-")
+                  {true} else {false}
             },
             // the `generator` function creates a Compiler from this Parslet
             // the 'left' parameter here would represent the left hand componant, or the '1' in the
@@ -1224,14 +1228,14 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
                 // the end results we want is a chain of instructions that look like
                 // left->right->math->next->...
                 // because we want these instances to be immutable we want to create them
                 // with the linked one already existing: math, then right, then left
                 // build the math instruction with the next instruction.
-                let m = Box::new(
+                let m = Arc::new(
                     MathInstruction {
                         instruction: self.token.value.chars().next().unwrap(),
                         next
@@ -1271,10 +1275,10 @@ mod tests {
             /// which math function are we
             pub instruction: char,
             /// the next Instruction in the chain
-            pub next: Option<Box<dyn Instruction>>,
+            pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for MathInstruction {
-            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 // pull the values we're acting on from the stack.
                 // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
                 // fortunately the compiler will always provide consistent results
@@ -1287,10 +1291,9 @@ mod tests {
                     _   => {}
                 }
                 // return the next Instruction
-                Ok(self.next.as_ref())
+                Ok(self.next.clone())
             }
         }
-
 
 
         /// The InfixParslet which is used to parse operators such as '+' is a bit more complex.
@@ -1298,15 +1301,17 @@ mod tests {
         /// Compiler for it's left hand element, and then it recursively parses the next Token
         /// to get it's right hand component.
         let simple_branching_parslet = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
+            precedence: PRECEDENCE_CALL,
             matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_SYMBOL {true} else {false}
+                if precedence < PRECEDENCE_CALL
+                    && token.token_type == TOKEN_TYPE_SYMBOL
+                    && token.value == "?" {true} else {false}
             },
 
             generator: |ctx, token, left, precedence| {
-                let then_branch = Parser::parse(ctx, left, precedence)?;
-                let else_branch = Parser::parse(ctx, left, precedence)?;
+                let then_branch = Parser::parse(ctx, &None, precedence)?;
+                eat_token_or_throw_error!(ctx, TOKEN_TYPE_SYMBOL, ":");
+                let else_branch = Parser::parse(ctx, &None, precedence)?;
                 // now build our compiler
                 Ok(Some(Box::new(CompilerBranching {
                     next: None,
@@ -1341,18 +1346,11 @@ mod tests {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
-                next: Option<Box<dyn Instruction>>,
-            ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
-                let mut ibrn: Option<Box<dyn Instruction>> = None;
-                let mut tbrn: Option<Box<dyn Instruction>> = None;
-                if next.is_some() {
-                    let next_ptr = Box::into_raw(next.unwrap());
-                    ibrn = Some(unsafe { Box::from_raw(next_ptr) });
-                    tbrn = Some(unsafe { Box::from_raw(next_ptr) });
-                }
-                let tb = self.then_branch.as_ref().unwrap().compile(ctx, ibrn)?;
-                let eb = self.else_branch.as_ref().unwrap().compile(ctx, tbrn)?;
-                let bi = Box::new(
+                next: Option<Arc<dyn Instruction>>,
+            ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+                let tb = self.then_branch.as_ref().unwrap().compile(ctx, next.clone())?;
+                let eb = self.else_branch.as_ref().unwrap().compile(ctx, next.clone())?;
+                let bi = Arc::new(
                     BranchingInstruction {
                         instruction: self.token.value.chars().next().unwrap(),
                         then_branch: tb,
@@ -1390,26 +1388,26 @@ mod tests {
         pub struct BranchingInstruction {
             /// which math function are we
             pub instruction: char,
-            pub then_branch: Option<Box<dyn Instruction>>,
-            pub else_branch: Option<Box<dyn Instruction>>,
+            pub then_branch: Option<Arc<dyn Instruction>>,
+            pub else_branch: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for BranchingInstruction {
-            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
+            fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 // pull the values we're acting on from the stack.
                 // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
                 // fortunately the compiler will always provide consistent results
-                let left = ctx.stack.pop().unwrap();
-                if left == 0 {
-                    return Ok(self.then_branch.as_ref())
+                let if_results = ctx.stack.pop().unwrap();
+                if if_results == 0 {
+                    return Ok(self.else_branch.clone())
                 }
                 // return the next Instruction
-                Ok(self.else_branch.as_ref())
+                Ok(self.then_branch.clone())
             }
         }
 
 
         let lexx = Box::new(Lexx::<512>::new(
-            Box::new(InputString::new(String::from("3 + 2".to_string()))),
+            Box::new(InputString::new(String::from("".to_string()))),
             vec![
                 Box::new(IntegerMatcher { index: 0, precedence: 0, running: true }),
                 Box::new(WhitespaceMatcher { index: 0, column: 0, line: 0, precedence: 0, running: true }),
@@ -1424,25 +1422,16 @@ mod tests {
             ],
             infix: vec![
                 simple_operator_parslet,
+                simple_branching_parslet,
             ],
             script_name: "test.txt".to_string(),
         };
 
-        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("3 - 2 + 4".to_string()))));
-
-        let parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
-
-        let compiler = parse_result.unwrap().unwrap();
-        let compile_result = compiler.compile(&mut CompileContext{}, None);
-
-
-        let mut ctx = ExecutionContext{
-            stack: Vec::new()
-        };
-
-        let binding = compile_result.unwrap().unwrap();
-        let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> = Ok(Some(&binding));
-
+        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 1 ? 1 : 0 + 2".to_string()))));
+        let mut parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        let mut compile_result = parse_result.unwrap().unwrap().compile(&mut CompileContext{}, None);
+        let mut ctx = ExecutionContext{ stack: Vec::new() };
+        let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(Some(compile_result.unwrap().unwrap()));
         loop {
             match running_instruction {
                 Ok(Some(i)) => {
@@ -1456,8 +1445,32 @@ mod tests {
                 }
             }
         }
+        assert_eq!(ctx.stack.pop(), Some(8));
 
-        assert_eq!(ctx.stack.pop(), Some(5));
+        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 : 0 + 2".to_string()))));
+        parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        compile_result = parse_result.unwrap().unwrap().compile(&mut CompileContext{}, None);
+        ctx = ExecutionContext{ stack: Vec::new() };
+        running_instruction = Ok(Some(compile_result.unwrap().unwrap()));
+        loop {
+            match running_instruction {
+                Ok(Some(i)) => {
+                    running_instruction = i.execute(&mut ctx);
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        assert_eq!(ctx.stack.pop(), Some(7));
+
+
+        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 0 + 2".to_string()))));
+        parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        assert_eq!(parse_result.err().unwrap().to_string(), "an error occurred: \"Missing ':' at 1, 11\"")
     }
     //
     // #[test]

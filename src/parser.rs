@@ -198,6 +198,41 @@ macro_rules! downcast {
     };
 }
 
+
+#[macro_export]
+/// A handy macro for burning off a required token or throwing an
+/// error if the token doesn't exist. Should probably be updated
+/// to allow a custom error message.
+/// Handy for things like the conditional ternary `?:` where you
+/// want to make sure the `:` exists and it's an error if it's not
+/// there, but you don't need to parse it specifically
+macro_rules! eat_token_or_throw_error {
+    ( $ctx:expr, $t_type:expr, $t_value:expr ) => {
+        loop {
+            match $ctx.lexx.look_ahead() {
+                Ok(Some(t)) => {
+                    if t.token_type == TOKEN_TYPE_WHITESPACE {
+                        // burn off whitespace
+                        let _ = $ctx.lexx.next_token();
+                        continue
+                    }
+                    if t.token_type == $t_type && t.value == $t_value {
+                        // burn off the token
+                        let _ = $ctx.lexx.next_token();
+                        break;
+                    } else {
+                        return Err(ParseError::Error(format!("Missing '{}' at {}, {}",$t_value,t.line,t.column).parse().unwrap()))
+                    }
+                }
+                _ => {
+                    return Err(ParseError::Error("Unexpected EOF".parse().unwrap()))
+                }
+            }
+        }
+    };
+}
+
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ParseError {
     TokenNotFound(String),
