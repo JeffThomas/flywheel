@@ -275,10 +275,7 @@
 //!
 //! ```
 
-use std::alloc::alloc;
 use std::sync::Arc;
-
-use lexx::Lexxer;
 
 use crate::compiler::CompileError;
 use crate::instruction::ExecutionContext;
@@ -295,7 +292,7 @@ fn main() {
 
     use compiler::{CompileContext, Compiler};
     use crate::instruction::Instruction;
-    use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
+    use crate::parser::{ParseContext, Parser, PRECEDENCE_PRODUCT};
     use crate::parslet::{InfixParslet, PrefixParslet};
     use lexx::input::InputString;
     use lexx::matcher_integer::IntegerMatcher;
@@ -306,9 +303,9 @@ fn main() {
     use lexx::Lexx;
     use std::error::Error;
 
-    /// The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
-    /// stand alone, such as a simple number, are considered Prefix Parslets that don't consume
-    /// any right hand components. This is about as simple as a Paarslet gets
+    // The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
+    // stand alone, such as a simple number, are considered Prefix Parslets that don't consume
+    // any right hand components. This is about as simple as a Parslet gets
     let simple_int_parslet = PrefixParslet {
         // the `matcher` function evaluates a token and decides if this parslet will parse it
         // if `matcher` returns `true` then the `generator` function will be called to do the parsing
@@ -321,8 +318,8 @@ fn main() {
             Ok(Some(Box::new(CompilerInt {
                 // the next link in our compiler chain, not used in this example
                 next: None,
-                /// this can be used to identify this kind of compiler, useful for optimizing compilers
-                /// or for downcasting which may be demonstrated in a test.
+                // this can be used to identify this kind of compiler, useful for optimizing compilers
+                // or for downcasting which may be demonstrated in a test.
                 compiler_type: 0,
                 // the token holds the value of the integer that was parsed
                 // when compiling we'll turn this string into an actual integer value
@@ -404,10 +401,10 @@ fn main() {
     }
 
 
-    /// The InfixParslet which is used to parse operators such as '+' is a bit more complex.
-    /// It typically gets handed the previously parsed Token in the form of an already created
-    /// Compiler for it's left hand element, and then it recursively parses the next Token
-    /// to get it's right hand component.
+    // The InfixParslet which is used to parse operators such as '+' is a bit more complex.
+    // It typically gets handed the previously parsed Token in the form of an already created
+    // Compiler for it's left hand element, and then it recursively parses the next Token
+    // to get it's right hand component.
     let simple_operator_parslet = InfixParslet {
         // InfixParslets also have Precedence which insure the orders of operation are followed
         // For an in-depth look at how they work check the docs for the Parser
@@ -442,20 +439,20 @@ fn main() {
         }
     };
 
-    /// A [Compiler](crate::compiler::Compiler) for making the math [Instructions](crate::instruction::Instruction).
-    /// because this is an infix compiler it's a bit more complicated, it needs to keep track of and
-    /// compile it's left and right hand components as well as itself.
+    // A [Compiler](crate::compiler::Compiler) for making the math [Instructions](crate::instruction::Instruction).
+    // because this is an infix compiler it's a bit more complicated, it needs to keep track of and
+    // compile it's left and right hand components as well as itself.
     pub struct CompilerAddSubtract {
-        /// for chained expressions, this is the chain link
+        // for chained expressions, this is the chain link
         pub next: Option<Box<dyn Compiler>>,
-        /// the left hand component of this infix
+        // the left hand component of this infix
         pub left: Option<Box<dyn Compiler>>,
-        /// the right hand component of this infix
+        // the right hand component of this infix
         pub right: Option<Box<dyn Compiler>>,
-        /// the math expression this represents
+        // the math expression this represents
         pub token: Token,
-        /// this can be used to identify this kind of compiler, useful for optimizing compilers
-        /// or for downcasting which may be demonstrated later on.
+        // this can be used to identify this kind of compiler, useful for optimizing compilers
+        // or for downcasting which may be demonstrated later on.
         pub compiler_type: u8,
     }
     impl Compiler for CompilerAddSubtract {
@@ -590,14 +587,13 @@ mod tests {
     use lexx::Lexx;
     use lexx::matcher_exact::ExactMatcher;
     use lexx::matcher_integer::IntegerMatcher;
-    use lexx::matcher_symbol::SymbolMatcher;
     use lexx::matcher_whitespace::WhitespaceMatcher;
-    use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_SYMBOL, TOKEN_TYPE_WHITESPACE};
+    use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_WHITESPACE};
 
     use crate::{eat_token_or_throw_error, TOKEN_TYPE_OPERATOR};
     use crate::compiler::{CompileContext, CompileError, Compiler};
     use crate::instruction::{ExecutionContext, Instruction};
-    use crate::parser::{ParseContext, Parser, PRECEDENCE_CALL, PRECEDENCE_EOE, PRECEDENCE_PREFIX, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
+    use crate::parser::{ParseContext, Parser, PRECEDENCE_CALL, PRECEDENCE_PREFIX, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
     use crate::parslet::{InfixParslet, PrefixParslet};
 
     #[test]
@@ -612,11 +608,11 @@ mod tests {
             pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for StaticIntInstruction {
-            /// `execute` is the only function an Instruction has
+            // `execute` is the only function an Instruction has
             fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-                /// the insert happens here
+                // the insert happens here
                 ctx.stack.push(self.value);
-                /// return the next Instruction
+                // return the next Instruction
                 Ok(self.next.clone())
             }
         }
@@ -907,7 +903,7 @@ mod tests {
             matcher: |_ctx, token| {
                 if token.token_type == TOKEN_TYPE_OPERATOR
                     && ";" == token.value { true } else { false }},
-            generator: |ctx, token| {
+            generator: |ctx, _token| {
                 Parser::parse(ctx, &None, 0)
             },
         };
@@ -1059,7 +1055,7 @@ mod tests {
     fn branching_test() {
         use crate::compiler::{CompileContext, Compiler};
         use crate::instruction::Instruction;
-        use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
+        use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_PRODUCT};
         use crate::parslet::{InfixParslet, PrefixParslet};
         use lexx::input::InputString;
         use lexx::matcher_integer::IntegerMatcher;
@@ -1070,78 +1066,43 @@ mod tests {
         use lexx::Lexx;
         use std::error::Error;
 
-        /// The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
-        /// stand alone, such as a simple number, are considered Prefix Parslets that don't consume
-        /// any right hand components. This is about as simple as a Paarslet gets
-        let simple_int_parslet = PrefixParslet {
-            // the `matcher` function evaluates a token and decides if this parslet will parse it
-            // if `matcher` returns `true` then the `generator` function will be called to do the parsing
+        let int_parslet = PrefixParslet {
             matcher: |_ctx, token| {
                 if token.token_type == TOKEN_TYPE_INTEGER { true } else { false }
             },
-            // the `generator` function creates a Compiler from this Parslet
             generator: |_ctx, token| {
-                // all we need to do is create the compiler that will build the Instruction
-                Ok(Some(Box::new(CompilerInt {
-                    // the next link in our compiler chain, not used in this example
+                Ok(Some(Box::new(IntCompiler {
                     next: None,
-                    /// this can be used to identify this kind of compiler, useful for optimizing compilers
-                    /// or for downcasting which may be demonstrated in a test.
                     compiler_type: 0,
-                    // the token holds the value of the integer that was parsed
-                    // when compiling we'll turn this string into an actual integer value
                     token: token.clone(),
                 })))
             }
         };
 
-        /// A [Compiler](crate::compiler::Compiler) for making the Int [Instructions](crate::instruction::Instruction)
-        /// the parser above will make this compiler and this compiler will make the integer instruction
-        /// below. This is about as simple as compilers can be.
-        pub struct CompilerInt {
-            /// for chained expressions, this is the chain link
+        pub struct IntCompiler {
             pub next: Option<Box<dyn Compiler>>,
-            /// this will hold what the integer is, such as "4" or "100"
             pub token: Token,
-            /// this can be used to identify this kind of compiler, useful for optimizing compilers
-            /// or for downcasting which may be demonstrated in a test.
             pub compiler_type: u8,
         }
-        impl Compiler for CompilerInt {
+        impl Compiler for IntCompiler {
             fn compile(
                 &self,
-                // The context can be used for state information during a compile, it's not
-                // used in this example
                 _ctx: &mut CompileContext,
-                // the next instruction is used to build the instruction chain, it will contain
-                // the next instruction that is to be executed after this one, this is important
-                // because Instructions are immutable
                 next: Option<Arc<dyn Instruction>>,
             ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-                // because this is a static integer, it is a Leaf node in the Compiler tree
-                // that will be generated. We don't need to worry about the `left`, `right` or
-                // `next` fields. We also aren't using the `compiler_type` which can be used for
-                // pre-compile directives or optimizations
                 Ok(Some(Arc::new(StaticIntInstruction {
                     value: self.token.value.parse::<i32>().unwrap(),
                     next,
                 })))
             }
 
-            /// utility methods that aren't used in this example
-            fn get_type(&self) -> u8 {
-                self.compiler_type
-            }
-            fn get_token(&self) -> Token {
-                self.token.clone()
-            }
+            fn get_type(&self) -> u8 { self.compiler_type }
+            fn get_token(&self) -> Token { self.token.clone() }
             fn get_next(&self) -> Option<Box<dyn Compiler>> { self.next.as_ref().map(|c|{c.clone_this()}) }
             fn set_next(&mut self, next: Option<Box<dyn Compiler>>) { self.next = next }
 
-            /// complexities with the Clone trait make it undesirable to mix in with
-            /// [Compiler](crate::compiler::Compiler), so it's done the old-fashioned way.
             fn clone_this(&self) -> Box<dyn Compiler> {
-                Box::new(CompilerInt {
+                Box::new(IntCompiler {
                     next: None,
                     token: self.token.clone(),
                     compiler_type: self.compiler_type,
@@ -1149,16 +1110,11 @@ mod tests {
             }
         }
 
-        /// A simple static integer instruction. When it is executed it simply pushes this value into
-        /// `ctx.stack` and return the next instruction.
         pub struct StaticIntInstruction {
-            /// the integer value we represent
             pub value: i32,
-            /// the next Instruction to be executed after this one
             pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for StaticIntInstruction {
-            /// `execute` is the only function an Instruction has
             fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
                 // the insert happens here
                 ctx.stack.push(self.value);
@@ -1168,37 +1124,17 @@ mod tests {
         }
 
 
-        /// The InfixParslet which is used to parse operators such as '+' is a bit more complex.
-        /// It typically gets handed the previously parsed Token in the form of an already created
-        /// Compiler for it's left hand element, and then it recursively parses the next Token
-        /// to get it's right hand component.
-        let simple_operator_parslet = InfixParslet {
-            // InfixParslets also have Precedence which insure the orders of operation are followed
-            // For an in-depth look at how they work check the docs for the Parser
+        let operator_parslet = InfixParslet {
             precedence: PRECEDENCE_PRODUCT,
-            // the `matcher` function evaluates a token and decides if this parslet will parse it
-            // in this case it needs to take the precedence of any previous infix parslets into
-            // consideration. Again, for an in-depth look at how precedence works check the Parser
-            // if `matcher` returns `true` then the `generator` function will be called to do the parsing
             matcher: |_ctx, token, precedence| {
                 if precedence < PRECEDENCE_PRODUCT
                     && token.token_type == TOKEN_TYPE_SYMBOL
                     && (token.value == "+" || token.value == "-")
                   {true} else {false}
             },
-            // the `generator` function creates a Compiler from this Parslet
-            // the 'left' parameter here would represent the left hand componant, or the '1' in the
-            // expression '1 + 5'.
             generator: |ctx, token, left, precedence| {
-                // parse the next 'right' hand token for this operator. that would be the compiler for
-                // '5' in the expression '1 + 5'. Note that both the right hand component or the left
-                // one might be more complex, for example the left hand might be an expression of its
-                // own such as in '1 + 5 + 4 + 2' in which case our right hand component will be
-                // a compiler tree representing `5 + 4 + 2`, but we don't have to worry about that,
-                // the details are taken care of for us.
                 let right = Parser::parse(ctx, left, precedence)?;
-                // now build our compiler
-                Ok(Some(Box::new(CompilerAddSubtract {
+                Ok(Some(Box::new(AddSubtractCompiler {
                     next: None,
                     compiler_type: 0,
                     left: left.as_ref().map(|l|{l.clone_this()}),
@@ -1208,55 +1144,35 @@ mod tests {
             }
         };
 
-        /// A [Compiler](crate::compiler::Compiler) for making the math [Instructions](crate::instruction::Instruction).
-        /// because this is an infix compiler it's a bit more complicated, it needs to keep track of and
-        /// compile it's left and right hand components as well as itself.
-        pub struct CompilerAddSubtract {
-            /// for chained expressions, this is the chain link
+        pub struct AddSubtractCompiler {
             pub next: Option<Box<dyn Compiler>>,
-            /// the left hand component of this infix
             pub left: Option<Box<dyn Compiler>>,
-            /// the right hand component of this infix
             pub right: Option<Box<dyn Compiler>>,
-            /// the math expression this represents
             pub token: Token,
-            /// this can be used to identify this kind of compiler, useful for optimizing compilers
-            /// or for downcasting which may be demonstrated later on.
             pub compiler_type: u8,
         }
-        impl Compiler for CompilerAddSubtract {
+        impl Compiler for AddSubtractCompiler {
             fn compile(
                 &self,
                 ctx: &mut CompileContext,
                 next: Option<Arc<dyn Instruction>>,
             ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-                // the end results we want is a chain of instructions that look like
-                // left->right->math->next->...
-                // because we want these instances to be immutable we want to create them
-                // with the linked one already existing: math, then right, then left
-                // build the math instruction with the next instruction.
                 let m = Arc::new(
                     MathInstruction {
                         instruction: self.token.value.chars().next().unwrap(),
                         next
                     } );
-                // build the right instruction with the math instruction
                 let r = self.right.as_ref().unwrap().compile(ctx, Some(m))?;
-                // build the left instruction with the left right instruction
                 let l = self.left.as_ref().unwrap().compile(ctx, r)?;
                 Ok(Some(l.unwrap()))
             }
-            fn get_type(&self) -> u8 {
-                self.compiler_type
-            }
-            fn get_token(&self) -> Token {
-                self.token.clone()
-            }
+            fn get_type(&self) -> u8 { self.compiler_type }
+            fn get_token(&self) -> Token { self.token.clone() }
             fn get_next(&self) -> Option<Box<dyn Compiler>> { self.next.as_ref().map(|c|{c.clone_this()}) }
             fn set_next(&mut self, next: Option<Box<dyn Compiler>>) { self.next = next }
 
             fn clone_this(&self) -> Box<dyn Compiler> {
-                Box::new(CompilerAddSubtract {
+                Box::new(AddSubtractCompiler {
                     next: None,
                     left: self.left.as_ref().map(|oc| {oc.clone_this()}),
                     right: self.right.as_ref().map(|oc| {oc.clone_this()}),
@@ -1267,40 +1183,25 @@ mod tests {
 
         }
 
-        /// A very simple math instruction which only does addition and subtraction. Note that is
-        /// is not ideal since it has to check which instruction it is each time it executes. The
-        /// more complex example creates individual [Instructions](crate::instruction::Instruction)
-        /// for each math function, which will execute faster.
         pub struct MathInstruction {
-            /// which math function are we
             pub instruction: char,
-            /// the next Instruction in the chain
             pub next: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for MathInstruction {
             fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-                // pull the values we're acting on from the stack.
-                // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
-                // fortunately the compiler will always provide consistent results
                 let right = ctx.stack.pop().unwrap();
                 let left = ctx.stack.pop().unwrap();
-                // perform the action and push the results into the stack
                 match self.instruction {
                     '+' => { ctx.stack.push(left + right); }
                     '-' => { ctx.stack.push(left - right); }
                     _   => {}
                 }
-                // return the next Instruction
                 Ok(self.next.clone())
             }
         }
 
 
-        /// The InfixParslet which is used to parse operators such as '+' is a bit more complex.
-        /// It typically gets handed the previously parsed Token in the form of an already created
-        /// Compiler for it's left hand element, and then it recursively parses the next Token
-        /// to get it's right hand component.
-        let simple_branching_parslet = InfixParslet {
+        let branching_parslet = InfixParslet {
             precedence: PRECEDENCE_CALL,
             matcher: |_ctx, token, precedence| {
                 if precedence < PRECEDENCE_CALL
@@ -1324,22 +1225,12 @@ mod tests {
             }
         };
 
-        /// A [Compiler](crate::compiler::Compiler) for making the math [Instructions](crate::instruction::Instruction).
-        /// because this is an infix compiler it's a bit more complicated, it needs to keep track of and
-        /// compile it's left and right hand components as well as itself.
         pub struct CompilerBranching {
-            /// for chained expressions, this is the chain link
             pub next: Option<Box<dyn Compiler>>,
-            /// the left hand component of this infix
             pub if_expression: Option<Box<dyn Compiler>>,
-            /// the if component of this infix
             pub then_branch: Option<Box<dyn Compiler>>,
-            /// the else component of this infix
             pub else_branch: Option<Box<dyn Compiler>>,
-            /// the math expression this represents
             pub token: Token,
-            /// this can be used to identify this kind of compiler, useful for optimizing compilers
-            /// or for downcasting which may be demonstrated later on.
             pub compiler_type: u8,
         }
         impl Compiler for CompilerBranching {
@@ -1359,12 +1250,8 @@ mod tests {
                 let if_expression = self.if_expression.as_ref().unwrap().compile(ctx, Some(bi))?;
                 Ok(Some(if_expression.unwrap()))
             }
-            fn get_type(&self) -> u8 {
-                self.compiler_type
-            }
-            fn get_token(&self) -> Token {
-                self.token.clone()
-            }
+            fn get_type(&self) -> u8 { self.compiler_type }
+            fn get_token(&self) -> Token { self.token.clone() }
             fn get_next(&self) -> Option<Box<dyn Compiler>> { self.next.as_ref().map(|c|{c.clone_this()}) }
             fn set_next(&mut self, next: Option<Box<dyn Compiler>>) { self.next = next }
 
@@ -1381,30 +1268,20 @@ mod tests {
 
         }
 
-        /// A very simple math instruction which only does addition and subtraction. Note that is
-        /// is not ideal since it has to check which instruction it is each time it executes. The
-        /// more complex example creates individual [Instructions](crate::instruction::Instruction)
-        /// for each math function, which will execute faster.
         pub struct BranchingInstruction {
-            /// which math function are we
             pub instruction: char,
             pub then_branch: Option<Arc<dyn Instruction>>,
             pub else_branch: Option<Arc<dyn Instruction>>,
         }
         impl Instruction for BranchingInstruction {
             fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-                // pull the values we're acting on from the stack.
-                // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
-                // fortunately the compiler will always provide consistent results
                 let if_results = ctx.stack.pop().unwrap();
                 if if_results == 0 {
                     return Ok(self.else_branch.clone())
                 }
-                // return the next Instruction
                 Ok(self.then_branch.clone())
             }
         }
-
 
         let lexx = Box::new(Lexx::<512>::new(
             Box::new(InputString::new(String::from("".to_string()))),
@@ -1415,20 +1292,20 @@ mod tests {
             ],
         ));
 
-        let mut simple_parse_context: ParseContext = ParseContext {
+        let mut pctx: ParseContext = ParseContext {
             lexx: lexx,
             prefix: vec![
-                simple_int_parslet,
+                int_parslet,
             ],
             infix: vec![
-                simple_operator_parslet,
-                simple_branching_parslet,
+                operator_parslet,
+                branching_parslet,
             ],
             script_name: "test.txt".to_string(),
         };
 
-        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 1 ? 1 : 0 + 2".to_string()))));
-        let mut parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        pctx.lexx.set_input(Box::new(InputString::new(String::from("5 + 1 ? 1 : 0 + 2".to_string()))));
+        let mut parse_result = Parser::parse(&mut pctx, &None, 0);
         let mut compile_result = parse_result.unwrap().unwrap().compile(&mut CompileContext{}, None);
         let mut ctx = ExecutionContext{ stack: Vec::new() };
         let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(Some(compile_result.unwrap().unwrap()));
@@ -1447,8 +1324,8 @@ mod tests {
         }
         assert_eq!(ctx.stack.pop(), Some(8));
 
-        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 : 0 + 2".to_string()))));
-        parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        pctx.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 : 0 + 2".to_string()))));
+        parse_result = Parser::parse(&mut pctx, &None, 0);
         compile_result = parse_result.unwrap().unwrap().compile(&mut CompileContext{}, None);
         ctx = ExecutionContext{ stack: Vec::new() };
         running_instruction = Ok(Some(compile_result.unwrap().unwrap()));
@@ -1468,8 +1345,8 @@ mod tests {
         assert_eq!(ctx.stack.pop(), Some(7));
 
 
-        simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 0 + 2".to_string()))));
-        parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
+        pctx.lexx.set_input(Box::new(InputString::new(String::from("5 + 0 ? 1 0 + 2".to_string()))));
+        parse_result = Parser::parse(&mut pctx, &None, 0);
         assert_eq!(parse_result.err().unwrap().to_string(), "an error occurred: \"Missing ':' at 1, 11\"")
     }
     //
