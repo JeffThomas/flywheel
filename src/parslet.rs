@@ -1,6 +1,9 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use lexx::token::Token;
 
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, ExpressionCompiler};
 use crate::parser::{ParseContext, ParseError, Parser};
 
 /// The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
@@ -21,7 +24,7 @@ pub struct PrefixParslet {
         ctx: &mut ParseContext,
         // The token is what is to be parsed
         token: &Token,
-    ) -> Result<Option<Box<dyn Compiler>>, ParseError>,
+    ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError>,
 }
 
 /// A collection of utility functions for Parsing
@@ -32,9 +35,9 @@ impl PrefixParslet {
         &self,
         ctx: &mut ParseContext,
         token: &Token,
-        _left: &Option<Box<dyn Compiler>>,
+        _left: &Option<Rc<RefCell<dyn Compiler>>>,
         _precedence: u8,
-    ) -> Result<Option<Box<dyn Compiler>>, ParseError> {
+    ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError> {
         if (self.matcher)(ctx, token) {
             (self.generator)(ctx, token)
         } else {
@@ -55,13 +58,18 @@ impl PrefixParslet {
     /// (NOTE, this is just one way to implement `if then`)
     /// Those '----------' lines are made with `chain_parse` in conjunction with the
     /// `script_parser` and `sub_parser` example Parslets.
-    pub fn chain_parse(ctx: &mut ParseContext) -> Result<Option<Box<dyn Compiler>>, ParseError> {
-        let next = Parser::parse(ctx, &None, 0)?;
-        return match next {
+    pub fn chain_parse(ctx: &mut ParseContext) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError> {
+        let current = Parser::parse(ctx, &None, 0)?;
+        return match current.as_ref() {
             None => Ok(None),
-            Some(mut n) => {
-                n.set_next(PrefixParslet::chain_parse(ctx)?);
-                Ok(Some(n))
+            Some(_) => {
+                let next = PrefixParslet::chain_parse(ctx)?;
+                Ok(Some(Rc::new(RefCell::new(ExpressionCompiler {
+                    next,
+                    expression: current,
+                    token: Token { value: "".to_string(), token_type: 0, len: 0, line: 0, column: 0, precedence: 0, },
+                    compiler_type: 0,
+                }))))
             }
         };
     }
@@ -72,7 +80,7 @@ impl PrefixParslet {
     pub fn chain_parse_until_token(
         ctx: &mut ParseContext,
         token: &Token,
-    ) -> Result<Option<Box<dyn Compiler>>, ParseError> {
+    ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError> {
         match ctx.lexx.look_ahead() {
             Ok(Some(t)) => {
                 if t.token_type == token.token_type && t.value == token.value {
@@ -83,12 +91,17 @@ impl PrefixParslet {
             }
             _ => {}
         }
-        let next = Parser::parse(ctx, &None, 0)?;
-        return match next {
+        let current = Parser::parse(ctx, &None, 0)?;
+        return match current.as_ref() {
             None => Ok(None),
-            Some(mut n) => {
-                n.set_next(PrefixParslet::chain_parse_until_token(ctx, token)?);
-                Ok(Some(n))
+            Some(_) => {
+                let next = PrefixParslet::chain_parse_until_token(ctx, token)?;
+                Ok(Some(Rc::new(RefCell::new(ExpressionCompiler {
+                    next,
+                    expression: current,
+                    token: Token { value: "".to_string(), token_type: 0, len: 0, line: 0, column: 0, precedence: 0, },
+                    compiler_type: 0,
+                }))))
             }
         };
     }
@@ -113,9 +126,9 @@ pub struct InfixParslet {
     pub generator: fn(
         ctx: &mut ParseContext,
         token: &Token,
-        left: &Option<Box<dyn Compiler>>,
+        left: &Option<Rc<RefCell<dyn Compiler>>>,
         precedence: u8,
-    ) -> Result<Option<Box<dyn Compiler>>, ParseError>,
+    ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError>,
 }
 impl InfixParslet {
     /// A utility function that simply calls `matcher` on the parslet and if it returns
@@ -124,9 +137,9 @@ impl InfixParslet {
         &self,
         ctx: &mut ParseContext,
         token: &Token,
-        left: &Option<Box<dyn Compiler>>,
+        left: &Option<Rc<RefCell<dyn Compiler>>>,
         precedence: u8,
-    ) -> Result<Option<Box<dyn Compiler>>, ParseError> {
+    ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError> {
         if (self.matcher)(ctx, token, precedence) {
             (self.generator)(ctx, token, left, self.precedence)
         } else {
