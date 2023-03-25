@@ -131,7 +131,6 @@ fn main() {
         },
         generator: |_ctx, token| {
             Ok(Some(Rc::new(RefCell::new(IntCompiler {
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -139,7 +138,6 @@ fn main() {
     };
 
     pub struct IntCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub token: Token,
         pub compiler_type: u8,
     }
@@ -149,13 +147,9 @@ fn main() {
             ctx: &mut CompileContext,
             next: Option<Arc<dyn Instruction>>,
         ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let n = match self.next {
-                Some(ref n) => {n.borrow().compile(ctx, next)?}
-                None => {next}
-            };
             Ok(Some(Arc::new(StaticIntInstruction {
                 value: self.token.value.parse::<i32>().unwrap(),
-                next: n,
+                next,
             })))
         }
         fn get_type(&self) -> u8 { self.compiler_type }
@@ -164,7 +158,6 @@ fn main() {
 
     pub struct NegateCompiler {
         pub right: Option<Rc<RefCell<dyn Compiler>>>,
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub token: Token,
         pub compiler_type: u8,
     }
@@ -174,12 +167,8 @@ fn main() {
             ctx: &mut CompileContext,
             next: Option<Arc<dyn Instruction>>,
         ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let n = match self.next {
-                Some(ref n) => {n.borrow().compile(ctx, next)?}
-                None => {next}
-            };
             let i = Arc::new(NegateInstruction {
-                next: n,
+                next,
             });
             let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
             Ok(r)
@@ -196,7 +185,6 @@ fn main() {
             let right = Parser::parse(ctx, &None, PRECEDENCE_PREFIX)?;
             Ok(Some(Rc::new(RefCell::new(NegateCompiler {
                 right,
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -204,7 +192,6 @@ fn main() {
     };
 
     pub struct MathCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub left: Option<Rc<RefCell<dyn Compiler>>>,
         pub right: Option<Rc<RefCell<dyn Compiler>>>,
         pub token: Token,
@@ -216,16 +203,12 @@ fn main() {
             ctx: &mut CompileContext,
             next: Option<Arc<dyn Instruction>>,
         ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let n = match self.next {
-                Some(ref n) => {n.borrow().compile(ctx, next)?}
-                None => {next}
-            };
             let i: Arc<dyn Instruction> = match self.token.value.as_str() {
-                "+" => { Arc::new(AddInstruction { next: n } ) }
-                "-" => { Arc::new(SubtractInstruction { next: n } ) }
-                "*" => { Arc::new(MultiplyInstruction { next: n } ) }
-                "/" => { Arc::new(DivideInstruction { next: n } ) }
-                _ => { Arc::new(AddInstruction { next: n } ) } // this can (should) not happen
+                "+" => { Arc::new(AddInstruction { next } ) }
+                "-" => { Arc::new(SubtractInstruction { next } ) }
+                "*" => { Arc::new(MultiplyInstruction { next } ) }
+                "/" => { Arc::new(DivideInstruction { next } ) }
+                _ => { Arc::new(AddInstruction { next } ) } // this can (should) not happen
             };
             let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
             let l = self.left.as_ref().unwrap().borrow().compile(ctx, r)?;
@@ -245,7 +228,6 @@ fn main() {
             Ok(Some(Rc::new(RefCell::new(MathCompiler {
                 left: left.as_ref().map(|l| l.clone()),
                 right,
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -262,7 +244,6 @@ fn main() {
             Ok(Some(Rc::new(RefCell::new(MathCompiler {
                 left: left.as_ref().map(|l| l.clone()),
                 right,
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -279,7 +260,6 @@ fn main() {
             Ok(Some(Rc::new(RefCell::new(MathCompiler {
                 left: left.as_ref().map(|l| l.clone()),
                 right,
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -296,7 +276,6 @@ fn main() {
             Ok(Some(Rc::new(RefCell::new(MathCompiler {
                 left: left.as_ref().map(|l| l.clone()),
                 right,
-                next: None,
                 token: token.clone(),
                 compiler_type: 0,
             }))))
@@ -317,7 +296,6 @@ fn main() {
             let else_branch = Parser::parse(ctx, &None, precedence)?;
             // now build our compiler
             Ok(Some(Rc::new(RefCell::new(BranchingCompiler {
-                next: None,
                 compiler_type: 0,
                 if_expression: left.as_ref().map(|l|{l.clone()}),
                 then_branch: then_branch.map(|r:Rc<RefCell<dyn Compiler>>|{r}),
@@ -328,7 +306,6 @@ fn main() {
     };
 
     pub struct BranchingCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub if_expression: Option<Rc<RefCell<dyn Compiler>>>,
         pub then_branch: Option<Rc<RefCell<dyn Compiler>>>,
         pub else_branch: Option<Rc<RefCell<dyn Compiler>>>,

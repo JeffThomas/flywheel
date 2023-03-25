@@ -26,14 +26,12 @@ fn main() {
         generator: |_ctx, token| {
             Ok(Some(Rc::new(RefCell::new(IntCompiler {
                 token: token.clone(),
-                next: None,
                 compiler_type: 0,
             }))))
         }
     };
 
     pub struct IntCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub token: Token,
         pub compiler_type: u8,
     }
@@ -82,7 +80,7 @@ fn main() {
 
     // ParseContext holds the parser state
     let mut simple_parse_context: ParseContext = ParseContext {
-        lexx: lexx,
+        lexx,
         // This contains all of the PrefixParslets to use
         prefix: vec![
             simple_int_parslet,

@@ -28,15 +28,12 @@ fn main() {
         generator: |_ctx, token| {
             Ok(Some(Rc::new(RefCell::new(IntCompiler {
                 token: token.clone(),
-                next: None,
                 compiler_type: 0,
             }))))
         }
     };
 
     pub struct IntCompiler {
-        // for chained expressions, this is the chain link
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         // this will hold what the integer is, such as "4" or "100"
         pub token: Token,
         // this can be used to identify this kind of compiler, useful for optimizing compilers
@@ -54,7 +51,6 @@ fn main() {
                 next,
             })))
         }
-
         fn get_type(&self) -> u8 { self.compiler_type }
         fn get_token(&self) -> Token { self.token.clone() }
     }
@@ -95,7 +91,6 @@ fn main() {
             // the details are taken care of for us.
             let right = Parser::parse(ctx, left, precedence)?;
             Ok(Some(Rc::new(RefCell::new(AddSubtractCompiler {
-                next: None,
                 compiler_type: 0,
                 left: left.as_ref().map(|l| { l.clone() }),
                 right: right.map(|r: Rc<RefCell<dyn Compiler>>| { r }),
@@ -107,7 +102,6 @@ fn main() {
     // because this is an infix compiler it's a bit more complicated, it needs to keep track of and
     // compile it's left and right hand components as well as itself.
     pub struct AddSubtractCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         // the left hand component of this infix
         pub left: Option<Rc<RefCell<dyn Compiler>>>,
         // the right hand component of this infix

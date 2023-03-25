@@ -24,7 +24,6 @@ fn main() {
         },
         generator: |_ctx, token| {
             Ok(Some(Rc::new(RefCell::new(IntCompiler {
-                next: None,
                 compiler_type: 0,
                 token: token.clone(),
             }))))
@@ -32,7 +31,6 @@ fn main() {
     };
 
     pub struct IntCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub token: Token,
         pub compiler_type: u8,
     }
@@ -79,7 +77,6 @@ fn main() {
             let else_branch = Parser::parse(ctx, &None, precedence)?;
             // now build our compiler
             Ok(Some(Rc::new(RefCell::new(BranchingCompiler {
-                next: None,
                 compiler_type: 0,
                 if_expression: left.as_ref().map(|l|{l.clone()}),
                 then_branch: then_branch.map(|r:Rc<RefCell<dyn Compiler>>|{r}),
@@ -90,7 +87,6 @@ fn main() {
     };
 
     pub struct BranchingCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
         pub if_expression: Option<Rc<RefCell<dyn Compiler>>>,
         pub then_branch: Option<Rc<RefCell<dyn Compiler>>>,
         pub else_branch: Option<Rc<RefCell<dyn Compiler>>>,
