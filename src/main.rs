@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use clap::Parser as CliParser;
-use lexx::input::{InputReader, InputString};
+use lexx::input::{InputReader, InputString, LexxInput};
 use lexx::Lexx;
 use lexx::matcher_exact::ExactMatcher;
 use lexx::matcher_integer::IntegerMatcher;
@@ -35,95 +35,232 @@ struct Args {
     raw: String,
 }
 
-fn run_script() {
 
+pub struct StaticIntInstruction {
+    pub value: i32,
+    pub next: Option<Arc<dyn Instruction>>,
 }
-fn main() {
-    let args = Args::parse();
+impl Instruction for StaticIntInstruction {
+    // `execute` is the only function an Instruction has
+    fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        // the insert happens here
+        ctx.stack.push(self.value);
+        // return the next Instruction
+        Ok(self.next.clone())
+    }
+}
 
-    pub struct StaticIntInstruction {
-        pub value: i32,
-        pub next: Option<Arc<dyn Instruction>>,
+pub struct AddInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for AddInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left + right);
+        Ok(self.next.clone())
     }
-    impl Instruction for StaticIntInstruction {
-        // `execute` is the only function an Instruction has
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            // the insert happens here
-            ctx.stack.push(self.value);
-            // return the next Instruction
-            Ok(self.next.clone())
-        }
+}
+pub struct SubtractInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for SubtractInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left - right);
+        Ok(self.next.clone())
     }
+}
+pub struct MultiplyInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for MultiplyInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left * right);
+        Ok(self.next.clone())
+    }
+}
+pub struct DivideInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for DivideInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left / right);
+        Ok(self.next.clone())
+    }
+}
+pub struct NegateInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for NegateInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        ctx.stack.push(-right);
+        Ok(self.next.clone())
+    }
+}
 
-    pub struct AddInstruction {
-        pub next: Option<Arc<dyn Instruction>>,
+
+pub struct IntCompiler {
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for IntCompiler {
+    fn compile(
+        &self,
+        _ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        Ok(Some(Arc::new(StaticIntInstruction {
+            value: self.token.value.parse::<i32>().unwrap(),
+            next,
+        })))
     }
-    impl Instruction for AddInstruction {
-        fn execute(
-            &self,
-            ctx: &mut ExecutionContext,
-        ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let right = ctx.stack.pop().unwrap();
-            let left = ctx.stack.pop().unwrap();
-            ctx.stack.push(left + right);
-            Ok(self.next.clone())
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct NegateCompiler {
+    pub right: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for NegateCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let i = Arc::new(NegateInstruction {
+            next,
+        });
+        let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
+        Ok(r)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct MathCompiler {
+    pub left: Option<Rc<RefCell<dyn Compiler>>>,
+    pub right: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for MathCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let i: Arc<dyn Instruction> = match self.token.value.as_str() {
+            "+" => { Arc::new(AddInstruction { next } ) }
+            "-" => { Arc::new(SubtractInstruction { next } ) }
+            "*" => { Arc::new(MultiplyInstruction { next } ) }
+            "/" => { Arc::new(DivideInstruction { next } ) }
+            _ => { Arc::new(AddInstruction { next } ) } // this can (should) not happen
+        };
+        let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
+        let l = self.left.as_ref().unwrap().borrow().compile(ctx, r)?;
+        Ok(l)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct BranchingCompiler {
+    pub if_expression: Option<Rc<RefCell<dyn Compiler>>>,
+    pub then_branch: Option<Rc<RefCell<dyn Compiler>>>,
+    pub else_branch: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for BranchingCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let tb = self.then_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
+        let eb = self.else_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
+        let bi = Arc::new(
+            BranchingInstruction {
+                instruction: self.token.value.chars().next().unwrap(),
+                then_branch: tb,
+                else_branch: eb
+            } );
+        let if_expression = self.if_expression.as_ref().unwrap().borrow().compile(ctx, Some(bi))?;
+        Ok(Some(if_expression.unwrap()))
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct BranchingInstruction {
+    pub instruction: char,
+    pub then_branch: Option<Arc<dyn Instruction>>,
+    pub else_branch: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for BranchingInstruction {
+    fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let if_results = ctx.stack.pop().unwrap();
+        if if_results == 0 {
+            return Ok(self.else_branch.clone())
+        }
+        Ok(self.then_branch.clone())
+    }
+}
+
+pub struct ScriptCompiler {
+    pub next: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for ScriptCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        match self.next {
+            Some(ref n) => { n.borrow().compile(ctx, None) }
+            None => { Ok(next) }
         }
     }
-    pub struct SubtractInstruction {
-        pub next: Option<Arc<dyn Instruction>>,
-    }
-    impl Instruction for SubtractInstruction {
-        fn execute(
-            &self,
-            ctx: &mut ExecutionContext,
-        ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let right = ctx.stack.pop().unwrap();
-            let left = ctx.stack.pop().unwrap();
-            ctx.stack.push(left - right);
-            Ok(self.next.clone())
-        }
-    }
-    pub struct MultiplyInstruction {
-        pub next: Option<Arc<dyn Instruction>>,
-    }
-    impl Instruction for MultiplyInstruction {
-        fn execute(
-            &self,
-            ctx: &mut ExecutionContext,
-        ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let right = ctx.stack.pop().unwrap();
-            let left = ctx.stack.pop().unwrap();
-            ctx.stack.push(left * right);
-            Ok(self.next.clone())
-        }
-    }
-    pub struct DivideInstruction {
-        pub next: Option<Arc<dyn Instruction>>,
-    }
-    impl Instruction for DivideInstruction {
-        fn execute(
-            &self,
-            ctx: &mut ExecutionContext,
-        ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let right = ctx.stack.pop().unwrap();
-            let left = ctx.stack.pop().unwrap();
-            ctx.stack.push(left / right);
-            Ok(self.next.clone())
-        }
-    }
-    pub struct NegateInstruction {
-        pub next: Option<Arc<dyn Instruction>>,
-    }
-    impl Instruction for NegateInstruction {
-        fn execute(
-            &self,
-            ctx: &mut ExecutionContext,
-        ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let right = ctx.stack.pop().unwrap();
-            ctx.stack.push(-right);
-            Ok(self.next.clone())
-        }
-    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+
+pub fn make_parse_context(input: Box<dyn LexxInput>) -> ParseContext {
+    let eoe_parslet = PrefixParslet {
+        matcher: |_ctx, token| {
+            if token.token_type == TOKEN_TYPE_OPERATOR
+                && ";" == token.value { true } else { false }},
+        generator: |ctx, _token| {
+            Parser::parse(ctx, &None, 0)
+        },
+    };
 
     let int_parslet = PrefixParslet {
         matcher: |_ctx, token| {
@@ -136,46 +273,6 @@ fn main() {
             }))))
         },
     };
-
-    pub struct IntCompiler {
-        pub token: Token,
-        pub compiler_type: u8,
-    }
-    impl Compiler for IntCompiler {
-        fn compile(
-            &self,
-            ctx: &mut CompileContext,
-            next: Option<Arc<dyn Instruction>>,
-        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            Ok(Some(Arc::new(StaticIntInstruction {
-                value: self.token.value.parse::<i32>().unwrap(),
-                next,
-            })))
-        }
-        fn get_type(&self) -> u8 { self.compiler_type }
-        fn get_token(&self) -> Token { self.token.clone() }
-    }
-
-    pub struct NegateCompiler {
-        pub right: Option<Rc<RefCell<dyn Compiler>>>,
-        pub token: Token,
-        pub compiler_type: u8,
-    }
-    impl Compiler for NegateCompiler {
-        fn compile(
-            &self,
-            ctx: &mut CompileContext,
-            next: Option<Arc<dyn Instruction>>,
-        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let i = Arc::new(NegateInstruction {
-                next,
-            });
-            let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
-            Ok(r)
-        }
-        fn get_type(&self) -> u8 { self.compiler_type }
-        fn get_token(&self) -> Token { self.token.clone() }
-    }
 
     let negate_parslet = PrefixParslet {
         matcher: |_ctx, token| {
@@ -190,33 +287,6 @@ fn main() {
             }))))
         },
     };
-
-    pub struct MathCompiler {
-        pub left: Option<Rc<RefCell<dyn Compiler>>>,
-        pub right: Option<Rc<RefCell<dyn Compiler>>>,
-        pub token: Token,
-        pub compiler_type: u8,
-    }
-    impl Compiler for MathCompiler {
-        fn compile(
-            &self,
-            ctx: &mut CompileContext,
-            next: Option<Arc<dyn Instruction>>,
-        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let i: Arc<dyn Instruction> = match self.token.value.as_str() {
-                "+" => { Arc::new(AddInstruction { next } ) }
-                "-" => { Arc::new(SubtractInstruction { next } ) }
-                "*" => { Arc::new(MultiplyInstruction { next } ) }
-                "/" => { Arc::new(DivideInstruction { next } ) }
-                _ => { Arc::new(AddInstruction { next } ) } // this can (should) not happen
-            };
-            let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
-            let l = self.left.as_ref().unwrap().borrow().compile(ctx, r)?;
-            Ok(l)
-        }
-        fn get_type(&self) -> u8 { self.compiler_type }
-        fn get_token(&self) -> Token { self.token.clone() }
-    }
     let div_operator = InfixParslet {
         precedence: PRECEDENCE_PRODUCT,
         matcher: |_ctx, token, precedence| {
@@ -305,90 +375,6 @@ fn main() {
         }
     };
 
-    pub struct BranchingCompiler {
-        pub if_expression: Option<Rc<RefCell<dyn Compiler>>>,
-        pub then_branch: Option<Rc<RefCell<dyn Compiler>>>,
-        pub else_branch: Option<Rc<RefCell<dyn Compiler>>>,
-        pub token: Token,
-        pub compiler_type: u8,
-    }
-    impl Compiler for BranchingCompiler {
-        fn compile(
-            &self,
-            ctx: &mut CompileContext,
-            next: Option<Arc<dyn Instruction>>,
-        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            let tb = self.then_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
-            let eb = self.else_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
-            let bi = Arc::new(
-                BranchingInstruction {
-                    instruction: self.token.value.chars().next().unwrap(),
-                    then_branch: tb,
-                    else_branch: eb
-                } );
-            let if_expression = self.if_expression.as_ref().unwrap().borrow().compile(ctx, Some(bi))?;
-            Ok(Some(if_expression.unwrap()))
-        }
-        fn get_type(&self) -> u8 { self.compiler_type }
-        fn get_token(&self) -> Token { self.token.clone() }
-    }
-
-    pub struct BranchingInstruction {
-        pub instruction: char,
-        pub then_branch: Option<Arc<dyn Instruction>>,
-        pub else_branch: Option<Arc<dyn Instruction>>,
-    }
-    impl Instruction for BranchingInstruction {
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
-            let if_results = ctx.stack.pop().unwrap();
-            if if_results == 0 {
-                return Ok(self.else_branch.clone())
-            }
-            Ok(self.then_branch.clone())
-        }
-    }
-
-    let eoe_parslet = PrefixParslet {
-        matcher: |_ctx, token| {
-            if token.token_type == TOKEN_TYPE_OPERATOR
-                && ";" == token.value { true } else { false }},
-        generator: |ctx, _token| {
-            Parser::parse(ctx, &None, 0)
-        },
-    };
-
-    pub struct ScriptCompiler {
-        pub next: Option<Rc<RefCell<dyn Compiler>>>,
-        pub token: Token,
-        pub compiler_type: u8,
-    }
-    impl Compiler for ScriptCompiler {
-        fn compile(
-            &self,
-            ctx: &mut CompileContext,
-            next: Option<Arc<dyn Instruction>>,
-        ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
-            match self.next {
-                Some(ref n) => { n.borrow().compile(ctx, None) }
-                None => { Ok(next) }
-            }
-        }
-        fn get_type(&self) -> u8 { self.compiler_type }
-        fn get_token(&self) -> Token { self.token.clone() }
-    }
-
-    let script_parser = PrefixParslet {
-        matcher: |_ctx, _token| true,
-        generator: |ctx, token| {
-            let next = PrefixParslet::chain_parse(ctx)?;
-            Ok(Some(Rc::new(RefCell::new(ScriptCompiler {
-                next,
-                token: token.clone(),
-                compiler_type: 0,
-            }))))
-        },
-    };
-
     let sub_parser = PrefixParslet {
         matcher: |_ctx, token| {
             if token.token_type == TOKEN_TYPE_OPERATOR && "(" == token.value {
@@ -412,9 +398,11 @@ fn main() {
         },
     };
 
-    let mut parse_context: ParseContext = ParseContext {
+
+
+    return ParseContext {
         lexx: Box::new(Lexx::<512>::new(
-            Box::new(InputString::new(String::from("".to_string()))),
+            input,
             vec![
                 Box::new(IntegerMatcher { index: 0, precedence: 0, running: true, }),
                 Box::new(WhitespaceMatcher { index: 0, column: 0, line: 0, precedence: 0, running: true, }),
@@ -441,35 +429,13 @@ fn main() {
         script_name: "test.txt".to_string(),
     };
 
-    if args.file != "" {
-        let file = File::open(args.file).unwrap();
-        let input_file = InputReader::new(file);
-        parse_context.lexx.set_input(Box::new(input_file));
-    } else if args.raw != "" {
-        parse_context.lexx.set_input(Box::new(InputString::new(args.raw)));
-    } else {
-        let input_stdin = InputReader::new(stdin());
-        parse_context.lexx.set_input(Box::new(input_stdin));
-    }
+}
 
-    let token = Token {
-        value: "".to_string(),
-        token_type: 0,
-        len: 0,
-        line: 0,
-        column: 0,
-        precedence: 0,
-    };
-
-    let result = script_parser.parse(&mut parse_context, &token, &None, 0);
-
-    let compiler = result.unwrap().unwrap();
-    let compile_result = compiler.borrow().compile(&mut CompileContext {}, None);
-
+pub fn execute_instructions(instruction: Arc<dyn Instruction>) -> Result<ExecutionContext, Box<dyn Error>> {
     let mut ctx = ExecutionContext { stack: Vec::new() };
 
-    let binding = compile_result.unwrap();
-    let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(binding);
+
+    let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(Some(instruction));
 
     loop {
         match running_instruction {
@@ -477,13 +443,71 @@ fn main() {
                 running_instruction = i.execute(&mut ctx);
             }
             Ok(None) => {
-                break;
+                return Ok(ctx);
             }
-            Err(_) => {
-                break;
+            Err(e) => {
+                return Err(e);
             }
         }
     }
+}
+
+pub fn run_script(parse_context: &mut ParseContext) -> Result<ExecutionContext, Box<dyn Error>> {
+
+    let parse_result = PrefixParslet::chain_parse(parse_context);
+
+    if parse_result.as_ref().is_err() {
+        println!("{}", parse_result.as_ref().err().unwrap());
+        return Err(Box::new(parse_result.as_ref().err().unwrap().clone()));
+    }
+
+    let compiler = parse_result.unwrap().unwrap();
+    let compile_result = compiler.borrow().compile(&mut CompileContext {}, None);
+
+    if compile_result.is_err() {
+    }
+
+    let instruction = match compile_result {
+        Ok(None) => {
+            return Ok(ExecutionContext{ stack: vec![] });
+        },
+        Ok(cr) => {
+            cr.unwrap()
+        },
+        Err(e) => {
+            return Err(Box::new(e));
+        }
+    };
+
+    execute_instructions(instruction)
+}
+
+fn main() {
+    let args = Args::parse();
+
+    let input: Box<dyn LexxInput> = if args.file != "" {
+        let file = File::open(args.file).unwrap();
+        Box::new(InputReader::new(file))
+    } else if args.raw != "" {
+        Box::new(InputString::new(args.raw))
+    } else {
+        let input_stdin = InputReader::new(stdin());
+        Box::new(input_stdin)
+    };
+
+    let mut pc = make_parse_context(input);
+
+    let run_result = run_script(&mut pc);
+
+    let mut ctx = match run_result {
+        Ok(ctx) => {
+            ctx
+        }
+        Err(e) => {
+            println!("{}", e);
+            return;
+        }
+    };
 
     loop {
         match ctx.stack.pop() {
@@ -497,3 +521,118 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use lexx::input::InputString;
+
+    use crate::{make_parse_context, run_script};
+
+    #[test]
+    fn test_basic_parse_and_execute() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1"))));
+
+        let ctx = run_script(&mut pc);
+
+        assert_eq!(ctx.unwrap().stack.pop(), Some(1));
+    }
+
+    #[test]
+    fn test_basic_addition() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 + 2"))));
+
+        let ctx = run_script(&mut pc);
+
+        assert_eq!(ctx.unwrap().stack.pop(), Some(3));
+    }
+
+    #[test]
+    fn test_basic_precedence() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 + 2 * 3"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(7));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("2 * 3 + 1"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(7));
+    }
+
+    #[test]
+    fn test_basic_sub() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("(1 + 2) * 3"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(9));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("2 * (3 + 1)"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(8));
+    }
+
+    #[test]
+    fn test_basic_sub_sub() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("(6+((2 * (3 + 1))/2))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(10));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("((((3 + 1))))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(4));
+    }
+
+    #[test]
+    fn test_prefix_negate() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("-1"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-1));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("3 * -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-15));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("-3 * -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(15));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("-3 + -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-8));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(6+(-(2 * (3 + 1))/-2))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(10));
+    }
+
+    #[test]
+    fn test_ternary_branch() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 ? 1 : 0"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(1));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("0 ? 1 : 0"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(0));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("1 + (-1) ? (3 * 6 + 1) : (5 * 2) + 2"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(22));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(1 + -1) ? (3 * 6 + 1) : (5 * 2) + 2"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(12));
+    }
+
+    #[test]
+    fn test_chaining_expressions() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1+2 3 + 4 5+6 "))));
+        let mut ctx = run_script(&mut pc);
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(11));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(7));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(3));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(1+2); -(3 + 4) (5+6)"))));
+        let mut ctx = run_script(&mut pc);
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(11));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(-7));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(3));
+    }
+
+}

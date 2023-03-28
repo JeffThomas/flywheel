@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use lexx::matcher_whitespace::TOKEN_TYPE_WHITESPACE;
 use lexx::token::Token;
 
 use crate::compiler::{Compiler, ExpressionCompiler};
@@ -81,7 +82,12 @@ impl PrefixParslet {
         ctx: &mut ParseContext,
         token: &Token,
     ) -> Result<Option<Rc<RefCell<dyn Compiler>>>, ParseError> {
-        match ctx.lexx.look_ahead() {
+        let mut lh = ctx.lexx.look_ahead();
+        if lh.as_ref().is_ok() && lh.as_ref().unwrap().as_ref().unwrap().token_type == TOKEN_TYPE_WHITESPACE {
+            _ = ctx.lexx.next_token();
+            lh = ctx.lexx.look_ahead();
+        }
+        match lh {
             Ok(Some(t)) => {
                 if t.token_type == token.token_type && t.value == token.value {
                     // burn off the block end token

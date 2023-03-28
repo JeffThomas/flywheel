@@ -42,6 +42,25 @@ pub trait Compiler: {
     fn get_token(&self) -> Token;
 }
 
+
+pub struct EmptyExpressionCompiler {
+    pub next: Option<Rc<RefCell<dyn Compiler>>>,
+    pub expression: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for EmptyExpressionCompiler {
+    fn compile(
+        &self,
+        _ctx: &mut CompileContext,
+        _next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        Ok(None)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
 pub struct ExpressionCompiler {
     pub next: Option<Rc<RefCell<dyn Compiler>>>,
     pub expression: Option<Rc<RefCell<dyn Compiler>>>,
