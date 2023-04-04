@@ -1,276 +1,22 @@
-//!
-//! # Flywheel
-//!
-//! Flywheel is a framework for writing scripting languages in Rust. It contains a Pratt inspired
-//! parser which builds compilers which will then produces instructions:
-//!
-//! * A Pratt inspired recursive decent parser utilizing [Parslets](crate::parslet::PrefixParslet)
-//! which consume [Tokens](crate::lexx::token::Token) and produce a [Compiler](crate::compiler::Compiler) tree structure
-//! * [Compiler](crate::compiler::Compiler)s which will compile down to a chain of [Instructions](crate::instruction::Instruction)
-//! * When an [Instruction](crate::instruction::Instruction) is run it returns the next [Instruction](crate::instruction::Instruction) to be run
-//!
-//! ## Parsing and Compiling
-//!
-//! Flywheel comes with a couple of simple implementations of itself which can execute
-//! expressions such as `3 * 2 + 4` or `(1 + (2 + 3) * 4 - 5) * 9 / 3 (1 +1) 2*5`. Yes,
-//! there are 3 different expressions in that last one, seperated by spaces. Flywheel
-//! can handle that.
-//!
-//! As an example the expression `3 - 2 + 4` will parse into a [Compiler](crate::compiler::Compiler) tree like so:
-//!```text
-//!           C(+)
-//!          /   \
-//!       C(-)  C(4)
-//!       /  \
-//!     C(3) C(2)
-//!```
-//!
-//! When `C(+).compile(ctx)` is called it will result in an [Instruction](crate::instruction::Instruction) chain like so:
-//!
-//! ```text
-//! Iinteger(3)->Iinteger(2)->Isubtract(-)->Iinteger(4)->Iaddition(+)
-//!```
-//!
-//! ## Execution
-//! The execution engine need simply call `.run(ctx)` on the first [Instruction](crate::instruction::Instruction), which returns
-//! the next [Instruction](crate::instruction::Instruction) to be run and so on. The engine need know nothing about what the
-//! [Instructions](crate::instruction::Instruction) do. Flywheel comes with some very simple execution engines in the samples
-//! and an execution context with nothing but an Integer stack in it. Executing the above
-//! example would look like this
-//!
-//! ```text
-//! Step 1
-//! Iinteger(3).run(ctx) -> Some(Iinteger(2))
-//! // 3 was inserted into the stack, Some(Iinteger(2)) is returned
-//! // ctx.stack = [3]
-//!
-//! Step 2
-//! Iintger(2).run(ctx) -> Some(Imultiply(*))
-//! // 2 was pushed into the stack, Some(Imultiply(*)) is returned
-//! // ctx.stack = [2,3]
-//!
-//! Step 3
-//! Imultiply(-).run(ctx) -> Some(Iinteger(4))
-//! // 3 and 2 were pulled out, subtracted and the results pushed into the stack, Some(Iinteger(4)) is returned
-//! // ctx.stack = [1]
-//!
-//! Step 4
-//! Iintger(4).run(ctx) -> Some(Iaddition(+))
-//! // 4 was pushed into the stack, Some(Iaddition(+)) is returned
-//! // ctx.stack = [4,1]
-//!
-//! Step 5
-//! Iaddition(+).run(ctx) -> None
-//! // 1 and 4 were pulled out, added and the results pushed into the stack, None is returned
-//! // ctx.stack = [5]
-//!```
-//!
-//! ## Branching?
-//! While there isn't (currently) an example it is expected that branching is handled
-//! by forking the chain and having the branching [Instructions](crate::instruction::Instruction) return whichever
-//! [Instructions](crate::instruction::Instruction) is appropriate. The [Instructions](crate::instruction::Instruction) chain looking something like:
-//!
-//! ```text
-//! I(rand)->I(if)->I('yes')->I('is decided')
-//!               \>I('no')/
-//!```
-//!
-//! ``I(if)`` will return either ``I('yes')`` or ``I('no')`` depending on how it
-//! interoperates the results of ``I(rand)``
-//!
-//! # Dependencies
-//!
-//! Rust uses the Lexx string tokenizer.
-//!
-//! # USE
-//!
-//! Flywheel is not intended to be used as-is or as a library. Instead it's meant to
-//! be Forked and modified to suit whatever need you wish.
-//!
-//! # Examples
-//!
-//! ```
-//! # use compiler::{CompileContext, CompilerStruct};
-//! # use crate::instruction::{
-//! #    AddInstruction, DivideInstruction, ExecutionContext, Instruction, MultiplyInstruction,
-//! #    StaticIntInstruction, SubtractInstruction,
-//! # };
-//! # use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
-//! # use crate::parslet::{InfixParslet, PrefixParslet};
-//! # use crate::{make_infix_compiler, make_infix_compiler_function, make_prefix_compiler};
-//! # use lexx::input::InputString;
-//! # use lexx::matcher_integer::IntegerMatcher;
-//! # use lexx::matcher_symbol::SymbolMatcher;
-//! # use lexx::matcher_whitespace::WhitespaceMatcher;
-//! # use lexx::token::TOKEN_TYPE_INTEGER;
-//! # use lexx::token::{Token, TOKEN_TYPE_SYMBOL};
-//! # use lexx::Lexx;
-//! # use std::error::Error;
-//!
-//! // A simple static integer instruction which is created with the integer it's representing. When
-//! // it is executed it simply pushes this value into `ctx.stack` and return the next instruction.
-//! pub struct SimpleStaticIntInstruction {
-//!     // the integer value we represent
-//!     pub value: i32,
-//!     // the next Instruction to be executed after this one
-//!     pub next: Option<Box<dyn Instruction>>,
-//! }
-//! impl Instruction for SimpleStaticIntInstruction {
-//!     // `execute` is the only function an Instruction has
-//!     fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-//!         // the insert happens here
-//!         ctx.stack.push(self.value);
-//!         // return the next Instruction
-//!         Ok(self.next.as_ref())
-//!     }
-//! }
-//!
-//! // A very simple math instruction which only does addition and subtraction. Note that is
-//! // is not ideal since it has to check which instruction it is each time it executes. The
-//! // more complex example creates individual Instructions for each math function, which will
-//! // execute faster.
-//! pub struct SimpleMathInstruction {
-//!     // which math function are we
-//!     pub instruction: char,
-//!     // the next Instruction in the chain
-//!     pub next: Option<Box<dyn Instruction>>,
-//! }
-//! impl Instruction for SimpleMathInstruction {
-//!     fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-//!         // pull the values we're acting on from the stack.
-//!         // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
-//!         // fortunately the compiler will always provide consistent results
-//!         let right = ctx.stack.pop().unwrap();
-//!         let left = ctx.stack.pop().unwrap();
-//!         // perform the action and push the results into the stack
-//!         match self.instruction {
-//!             '+' => { ctx.stack.push(left + right); }
-//!             '-' => { ctx.stack.push(left - right); }
-//!             _   => {}
-//!         }
-//!         // return the next Instruction
-//!         Ok(self.next.as_ref())
-//!     }
-//! }
-//!
-//! // The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
-//! // stand alone, such as a simple number, are considered Prefix Parslets that don't consume
-//! // any right hand components.
-//! let simple_int_parslet = PrefixParslet {
-//!     // the `matcher` function lets the Parser know that this Parslet will consume this token.
-//!     // if `matcher` returns `true` then the `generator` function will be called
-//!     matcher: |_ctx, token| {
-//!         if token.token_type == TOKEN_TYPE_INTEGER { true } else { false }
-//!     },
-//!     // the `generator` function creates a Compiler from this Parslet
-//!     generator: |_ctx, token| {
-//!         Ok(Some(Box::new(CompilerStruct {
-//!             // because this is a static integer, it is a Leaf node in the Compiler tree
-//!             // that will be generated. We don't need to worry about the `left`, `right` or
-//!             // `next` fields. We also aren't using the `compiler_type` which can be used for
-//!             // pre-compile directives or optimizations
-//!             left: None, right: None, next: None, compiler_type: 0,
-//!             // when compiling knowing what Token created this compiler can be useful
-//!             token: token.clone(),
-//!             // the actual `compile` function which generates an Instruction
-//!             compile: |_ctx: &mut CompileContext, compiler: &CompilerStruct, next: Option<Box<dyn Instruction>>| {
-//!                 // simply makes a `SimpleStaticIntInstruction`
-//!                 Ok(Some(Box::new(SimpleStaticIntInstruction
-//!                 {
-//!                     value: compiler.token.value.parse::<i32>().unwrap(),
-//!                     next
-//!                 })))
-//!             }})
-//!         ))
-//!     }
-//! };
-//!
-//! // The InfixParslet is a bit more complex. It typically gets handed the previously parsed
-//! // Token in the form of an already created Compiler for it's left element, and then it
-//! // recursively parses the next Token(s) to get it's right hand component
-//! let simple_operator_parslet = InfixParslet {
-//!     // InfixParslets also have Precedence which insure the orders of operation are followed
-//!     // For an in-depth look at how they work check the docs for the Parser
-//!     precedence: PRECEDENCE_PRODUCT,
-//!     matcher: |_ctx, token, precedence| {
-//!         if precedence < PRECEDENCE_PRODUCT
-//!             && token.token_type == TOKEN_TYPE_SYMBOL {true} else {false}
-//!     },
-//!     generator: |ctx, token, left, precedence| {
-//!         let right = Parser::parse(ctx, left, precedence)?;
-//!         Ok(Some(Box::new(CompilerStruct {
-//!             next: None, compiler_type: 0,
-//!             left: left.as_ref().map(|l:&Box<CompilerStruct>|{l.clone()}),
-//!             right: right.map(|r:Box<CompilerStruct>|{r}),
-//!             token: token.clone(),
-//!             compile: |ctx: &mut CompileContext, compiler: &CompilerStruct, next: Option<Box<dyn Instruction>>| {
-//!                 let i = Box::new(
-//!                     SimpleMathInstruction {
-//!                         instruction: compiler.token.value.chars().next().unwrap(),
-//!                         next
-//!                     } );
-//!                 let r = (compiler.right.as_ref().unwrap().compile)(ctx, compiler.right.as_ref().unwrap(), Some(i))?;
-//!                 let l = (compiler.left.as_ref().unwrap().compile)(ctx, compiler.left.as_ref().unwrap(), r)?;
-//!                 Ok(Some(l.unwrap()))
-//!             }
-//!         })))
-//!     }
-//! };
-//!
-//! let lexx = Box::new(Lexx::<512>::new(
-//!     Box::new(InputString::new(String::from("3 + 2".to_string()))),
-//!     vec![
-//!         Box::new(IntegerMatcher { index: 0, precedence: 0, running: true }),
-//!         Box::new(WhitespaceMatcher { index: 0, column: 0, line: 0, precedence: 0, running: true }),
-//!         Box::new(SymbolMatcher { index: 0, precedence: 0, running: true }),
-//!     ],
-//! ));
-//!
-//! let mut simple_parse_context: ParseContext = ParseContext {
-//!     lexx: lexx,
-//!     prefix: vec![
-//!         simple_int_parslet,
-//!     ],
-//!     infix: vec![
-//!         simple_operator_parslet,
-//!     ],
-//!     script: "test.txt".to_string(),
-//! };
-//!
-//! simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("3 - 2 + 4".to_string()))));
-//!
-//! let parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
-//!
-//! let compiler = parse_result.unwrap().unwrap();
-//! let compile_result = (compiler.compile)(&mut CompileContext{}, &compiler, None);
-//!
-//!
-//! let mut ctx = ExecutionContext{
-//!     stack: Vec::new()
-//! };
-//!
-//! let binding = compile_result.unwrap().unwrap();
-//! let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> = Ok(Some(&binding));
-//!
-//! loop {
-//!     match running_instruction {
-//!         Ok(Some(i)) => {
-//!             running_instruction = i.execute(&mut ctx);
-//!         }
-//!         Ok(None) => {
-//!             break;
-//!         }
-//!         Err(_) => {
-//!             break;
-//!         }
-//!     }
-//! }
-//!
-//! assert_eq!(ctx.stack.pop(), Some(5));
-//!
-//! ```
+use std::cell::RefCell;
+use std::error::Error;
+use std::fs::File;
+use std::io::stdin;
+use std::rc::Rc;
+use std::sync::Arc;
 
-use lexx::Lexxer;
+use clap::Parser as CliParser;
+use lexx::input::{InputReader, InputString, LexxInput};
+use lexx::Lexx;
+use lexx::matcher_exact::ExactMatcher;
+use lexx::matcher_integer::IntegerMatcher;
+use lexx::matcher_whitespace::WhitespaceMatcher;
+use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_WHITESPACE};
+
+use crate::compiler::{CompileContext, CompileError, Compiler};
+use crate::instruction::{ExecutionContext, Instruction};
+use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_CALL, PRECEDENCE_PREFIX, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
+use crate::parslet::{InfixParslet, PrefixParslet};
 
 pub mod compiler;
 pub mod instruction;
@@ -279,174 +25,417 @@ pub mod parslet;
 
 pub const TOKEN_TYPE_OPERATOR: u16 = 20;
 
-fn main() {
-    println!("Hello, world!");
+#[derive(CliParser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Name of file to parse
+    #[arg(short, long, default_value_t = String::from(""))]
+    file: String,
+    #[arg(default_value_t = String::from(""))]
+    raw: String,
+}
 
-    use compiler::{CompileContext, CompilerStruct};
-    use crate::instruction::{
-        AddInstruction, DivideInstruction, ExecutionContext, Instruction, MultiplyInstruction,
-        StaticIntInstruction, SubtractInstruction,
+
+pub struct StaticIntInstruction {
+    pub value: i32,
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for StaticIntInstruction {
+    // `execute` is the only function an Instruction has
+    fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        // the insert happens here
+        ctx.stack.push(self.value);
+        // return the next Instruction
+        Ok(self.next.clone())
+    }
+}
+
+pub struct AddInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for AddInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left + right);
+        Ok(self.next.clone())
+    }
+}
+pub struct SubtractInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for SubtractInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left - right);
+        Ok(self.next.clone())
+    }
+}
+pub struct MultiplyInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for MultiplyInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left * right);
+        Ok(self.next.clone())
+    }
+}
+pub struct DivideInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for DivideInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        let left = ctx.stack.pop().unwrap();
+        ctx.stack.push(left / right);
+        Ok(self.next.clone())
+    }
+}
+pub struct NegateInstruction {
+    pub next: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for NegateInstruction {
+    fn execute(
+        &self,
+        ctx: &mut ExecutionContext,
+    ) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let right = ctx.stack.pop().unwrap();
+        ctx.stack.push(-right);
+        Ok(self.next.clone())
+    }
+}
+
+
+pub struct IntCompiler {
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for IntCompiler {
+    fn compile(
+        &self,
+        _ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        Ok(Some(Arc::new(StaticIntInstruction {
+            value: self.token.value.parse::<i32>().unwrap(),
+            next,
+        })))
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct NegateCompiler {
+    pub right: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for NegateCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let i = Arc::new(NegateInstruction {
+            next,
+        });
+        let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
+        Ok(r)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct MathCompiler {
+    pub left: Option<Rc<RefCell<dyn Compiler>>>,
+    pub right: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for MathCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let i: Arc<dyn Instruction> = match self.token.value.as_str() {
+            "+" => { Arc::new(AddInstruction { next } ) }
+            "-" => { Arc::new(SubtractInstruction { next } ) }
+            "*" => { Arc::new(MultiplyInstruction { next } ) }
+            "/" => { Arc::new(DivideInstruction { next } ) }
+            _ => { Arc::new(AddInstruction { next } ) } // this can (should) not happen
+        };
+        let r = self.right.as_ref().unwrap().borrow().compile(ctx, Some(i))?;
+        let l = self.left.as_ref().unwrap().borrow().compile(ctx, r)?;
+        Ok(l)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct BranchingCompiler {
+    pub if_expression: Option<Rc<RefCell<dyn Compiler>>>,
+    pub then_branch: Option<Rc<RefCell<dyn Compiler>>>,
+    pub else_branch: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for BranchingCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let tb = self.then_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
+        let eb = self.else_branch.as_ref().unwrap().borrow().compile(ctx, next.clone())?;
+        let bi = Arc::new(
+            BranchingInstruction {
+                instruction: self.token.value.chars().next().unwrap(),
+                then_branch: tb,
+                else_branch: eb
+            } );
+        let if_expression = self.if_expression.as_ref().unwrap().borrow().compile(ctx, Some(bi))?;
+        Ok(Some(if_expression.unwrap()))
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+pub struct BranchingInstruction {
+    pub instruction: char,
+    pub then_branch: Option<Arc<dyn Instruction>>,
+    pub else_branch: Option<Arc<dyn Instruction>>,
+}
+impl Instruction for BranchingInstruction {
+    fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
+        let if_results = ctx.stack.pop().unwrap();
+        if if_results == 0 {
+            return Ok(self.else_branch.clone())
+        }
+        Ok(self.then_branch.clone())
+    }
+}
+
+pub struct ScriptCompiler {
+    pub next: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for ScriptCompiler {
+    fn compile(
+        &self,
+        ctx: &mut CompileContext,
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        match self.next {
+            Some(ref n) => { n.borrow().compile(ctx, None) }
+            None => { Ok(next) }
+        }
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
+
+
+pub fn make_parse_context(input: Box<dyn LexxInput>) -> ParseContext {
+    let eoe_parslet = PrefixParslet {
+        matcher: |_ctx, token| {
+            if token.token_type == TOKEN_TYPE_OPERATOR
+                && ";" == token.value { true } else { false }},
+        generator: |ctx, _token| {
+            Parser::parse(ctx, &None, 0)
+        },
     };
-    use crate::parser::{ParseContext, ParseError, Parser, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
-    use crate::parslet::{InfixParslet, PrefixParslet};
-    use crate::{make_infix_compiler, make_infix_compiler_function, make_prefix_compiler};
-    use lexx::input::InputString;
-    use lexx::matcher_integer::IntegerMatcher;
-    use lexx::matcher_symbol::SymbolMatcher;
-    use lexx::matcher_whitespace::WhitespaceMatcher;
-    use lexx::token::TOKEN_TYPE_INTEGER;
-    use lexx::token::{Token, TOKEN_TYPE_SYMBOL};
-    use lexx::Lexx;
-    use std::error::Error;
 
-    // A simple static integer instruction which is created with the integer it's representing. When
-    // it is executed it simply pushes this value into `ctx.stack` and return the next instruction.
-    pub struct SimpleStaticIntInstruction {
-        // the integer value we represent
-        pub value: i32,
-        // the next Instruction to be executed after this one
-        pub next: Option<Box<dyn Instruction>>,
-    }
-    impl Instruction for SimpleStaticIntInstruction {
-        // `execute` is the only function an Instruction has
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-            // the insert happens here
-            ctx.stack.push(self.value);
-            // return the next Instruction
-            Ok(self.next.as_ref())
-        }
-    }
-
-    // A very simple math instruction which only does addition and subtraction. Note that is
-    // is not ideal since it has to check which instruction it is each time it executes. The
-    // more complex example creates individual Instructions for each math function, which will
-    // execute faster.
-    pub struct SimpleMathInstruction {
-        // which math function are we
-        pub instruction: char,
-        // the next Instruction in the chain
-        pub next: Option<Box<dyn Instruction>>,
-    }
-    impl Instruction for SimpleMathInstruction {
-        fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-            // pull the values we're acting on from the stack.
-            // NOTE: The order is important, 2 - 3 is not the same as 3 - 2
-            // fortunately the compiler will always provide consistent results
-            let right = ctx.stack.pop().unwrap();
-            let left = ctx.stack.pop().unwrap();
-            // perform the action and push the results into the stack
-            match self.instruction {
-                '+' => { ctx.stack.push(left + right); }
-                '-' => { ctx.stack.push(left - right); }
-                _   => {}
-            }
-            // return the next Instruction
-            Ok(self.next.as_ref())
-        }
-    }
-
-    // The Pratt parser pattern only has two kinds of Parslets, Prefix and Infix. Items that
-    // stand alone, such as a simple number, are considered Prefix Parslets that don't consume
-    // any right hand components.
-    let simple_int_parslet = PrefixParslet {
-        // the `matcher` function lets the Parser know that this Parslet will consume this token.
-        // if `matcher` returns `true` then the `generator` function will be called
+    let int_parslet = PrefixParslet {
         matcher: |_ctx, token| {
             if token.token_type == TOKEN_TYPE_INTEGER { true } else { false }
         },
-        // the `generator` function creates a Compiler from this Parslet
         generator: |_ctx, token| {
-            Ok(Some(Box::new(CompilerStruct {
-                // because this is a static integer, it is a Leaf node in the Compiler tree
-                // that will be generated. We don't need to worry about the `left`, `right` or
-                // `next` fields. We also aren't using the `compiler_type` which can be used for
-                // pre-compile directives or optimizations
-                left: None,
-                right: None,
-                next: None,
-                compiler_type: 0,
-                // when compiling knowing what Token created this compiler can be useful
+            Ok(Some(Rc::new(RefCell::new(IntCompiler {
                 token: token.clone(),
-                // the actual `compile` function which generates an Instruction
-                compile: |_ctx: &mut CompileContext, compiler: &CompilerStruct, next: Option<Box<dyn Instruction>>| {
-                    // simply makes a `SimpleStaticIntInstruction`
-                    Ok(Some(Box::new(SimpleStaticIntInstruction
-                    {
-                        value: compiler.token.value.parse::<i32>().unwrap(),
-                        next
-                    })))
-                }
-            })
-            ))
-        }
+                compiler_type: 0,
+            }))))
+        },
     };
 
-    // The InfixParslet is a bit more complex. It typically gets handed the previously parsed
-    // Token in the form of an already created Compiler for it's left element, and then it
-    // recursively parses the next Token(s) to get it's right hand component
-    let simple_operator_parslet = InfixParslet {
-        // InfixParslets also have Precedence which insure the orders of operation are followed
-        // For an in-depth look at how they work check the docs for the Parser
+    let negate_parslet = PrefixParslet {
+        matcher: |_ctx, token| {
+            if token.token_type == TOKEN_TYPE_OPERATOR
+                && "-" == token.value { true } else { false }},
+        generator: |ctx, token| {
+            let right = Parser::parse(ctx, &None, PRECEDENCE_PREFIX)?;
+            Ok(Some(Rc::new(RefCell::new(NegateCompiler {
+                right,
+                token: token.clone(),
+                compiler_type: 0,
+            }))))
+        },
+    };
+    let div_operator = InfixParslet {
         precedence: PRECEDENCE_PRODUCT,
         matcher: |_ctx, token, precedence| {
             if precedence < PRECEDENCE_PRODUCT
-                && token.token_type == TOKEN_TYPE_SYMBOL {true} else {false}
-        },
+                && token.token_type == TOKEN_TYPE_OPERATOR
+                && "/" == token.value { true } else { false }},
         generator: |ctx, token, left, precedence| {
             let right = Parser::parse(ctx, left, precedence)?;
-            Ok(Some(Box::new(CompilerStruct {
-                next: None, compiler_type: 0,
-                left: left.as_ref().map(|l:&Box<CompilerStruct>|{l.clone()}),
-                right: right.map(|r:Box<CompilerStruct>|{r}),
+            Ok(Some(Rc::new(RefCell::new(MathCompiler {
+                left: left.as_ref().map(|l| l.clone()),
+                right,
                 token: token.clone(),
-                compile: |ctx: &mut CompileContext, compiler: &CompilerStruct, next: Option<Box<dyn Instruction>>| {
-                    let i = Box::new(
-                        SimpleMathInstruction {
-                            instruction: compiler.token.value.chars().next().unwrap(),
-                            next
-                        } );
-                    let r = (compiler.right.as_ref().unwrap().compile)(ctx, compiler.right.as_ref().unwrap(), Some(i))?;
-                    let l = (compiler.left.as_ref().unwrap().compile)(ctx, compiler.left.as_ref().unwrap(), r)?;
-                    Ok(Some(l.unwrap()))
-                }
-            })))
+                compiler_type: 0,
+            }))))
+        },
+    };
+    let mult_operator = InfixParslet {
+        precedence: PRECEDENCE_PRODUCT,
+        matcher: |_ctx, token, precedence| {
+            if precedence < PRECEDENCE_PRODUCT
+                && token.token_type == TOKEN_TYPE_OPERATOR
+                && "*" == token.value { true } else { false }},
+        generator: |ctx, token, left, precedence| {
+            let right = Parser::parse(ctx, left, precedence)?;
+            Ok(Some(Rc::new(RefCell::new(MathCompiler {
+                left: left.as_ref().map(|l| l.clone()),
+                right,
+                token: token.clone(),
+                compiler_type: 0,
+            }))))
+        },
+    };
+    let plus_operator = InfixParslet {
+        precedence: PRECEDENCE_SUM,
+        matcher: |_ctx, token, precedence| {
+            if precedence < PRECEDENCE_SUM
+                && token.token_type == TOKEN_TYPE_OPERATOR
+                && "+" == token.value { true } else { false }},
+        generator: |ctx, token, left, precedence| {
+            let right = Parser::parse(ctx, left, precedence)?;
+            Ok(Some(Rc::new(RefCell::new(MathCompiler {
+                left: left.as_ref().map(|l| l.clone()),
+                right,
+                token: token.clone(),
+                compiler_type: 0,
+            }))))
+        },
+    };
+    let minus_operator = InfixParslet {
+        precedence: PRECEDENCE_SUM,
+        matcher: |_ctx, token, precedence| {
+            if precedence < PRECEDENCE_SUM
+                && token.token_type == TOKEN_TYPE_OPERATOR
+                && "-" == token.value { true } else { false }},
+        generator: |ctx, token, left, precedence| {
+            let right = Parser::parse(ctx, left, precedence)?;
+            Ok(Some(Rc::new(RefCell::new(MathCompiler {
+                left: left.as_ref().map(|l| l.clone()),
+                right,
+                token: token.clone(),
+                compiler_type: 0,
+            }))))
+        },
+    };
+
+    let branching_parslet = InfixParslet {
+        precedence: PRECEDENCE_CALL,
+        matcher: |_ctx, token, precedence| {
+            if precedence < PRECEDENCE_CALL
+                && token.token_type == TOKEN_TYPE_OPERATOR
+                && token.value == "?" {true} else {false}
+        },
+
+        generator: |ctx, token, left, precedence| {
+            let then_branch = Parser::parse(ctx, &None, precedence)?;
+            eat_token_or_throw_error!(ctx, TOKEN_TYPE_OPERATOR, ":");
+            let else_branch = Parser::parse(ctx, &None, precedence)?;
+            // now build our compiler
+            Ok(Some(Rc::new(RefCell::new(BranchingCompiler {
+                compiler_type: 0,
+                if_expression: left.as_ref().map(|l|{l.clone()}),
+                then_branch: then_branch.map(|r:Rc<RefCell<dyn Compiler>>|{r}),
+                else_branch: else_branch.map(|r:Rc<RefCell<dyn Compiler>>|{r}),
+                token: token.clone(),
+            }))))
         }
     };
 
-    let lexx = Box::new(Lexx::<512>::new(
-        Box::new(InputString::new(String::from("3 + 2".to_string()))),
-        vec![
-            Box::new(IntegerMatcher { index: 0, precedence: 0, running: true }),
-            Box::new(WhitespaceMatcher { index: 0, column: 0, line: 0, precedence: 0, running: true }),
-            Box::new(SymbolMatcher { index: 0, precedence: 0, running: true }),
-        ],
-    ));
+    let sub_parser = PrefixParslet {
+        matcher: |_ctx, token| {
+            if token.token_type == TOKEN_TYPE_OPERATOR && "(" == token.value {
+                true
+            } else {
+                false
+            }
+        },
+        generator: |ctx, _token| {
+            return PrefixParslet::chain_parse_until_token(
+                ctx,
+                &Token {
+                    value: ")".to_string(),
+                    token_type: TOKEN_TYPE_OPERATOR,
+                    len: 0,
+                    line: 0,
+                    column: 0,
+                    precedence: 0,
+                },
+            );
+        },
+    };
 
-    let mut simple_parse_context: ParseContext = ParseContext {
-        lexx: lexx,
+
+
+    return ParseContext {
+        lexx: Box::new(Lexx::<512>::new(
+            input,
+            vec![
+                Box::new(IntegerMatcher { index: 0, precedence: 0, running: true, }),
+                Box::new(WhitespaceMatcher { index: 0, column: 0, line: 0, precedence: 0, running: true, }),
+                Box::new(ExactMatcher::build_exact_matcher(
+                    vec!["+", "-", "*", "/", "(", ")", ";","?",":"],
+                    TOKEN_TYPE_OPERATOR,
+                    1,
+                )),
+            ],
+        )),
         prefix: vec![
-            simple_int_parslet,
+            negate_parslet,
+            int_parslet,
+            sub_parser,
+            eoe_parslet
         ],
         infix: vec![
-            simple_operator_parslet,
+            plus_operator,
+            minus_operator,
+            mult_operator,
+            div_operator,
+            branching_parslet
         ],
-        script: "test.txt".to_string(),
+        script_name: "test.txt".to_string(),
     };
 
-    simple_parse_context.lexx.set_input(Box::new(InputString::new(String::from("3 - 2 + 4".to_string()))));
+}
 
-    let parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
-
-    let compiler = parse_result.unwrap().unwrap();
-    let compile_result = (compiler.compile)(&mut CompileContext{}, &compiler, None);
+pub fn execute_instructions(instruction: Arc<dyn Instruction>) -> Result<ExecutionContext, Box<dyn Error>> {
+    let mut ctx = ExecutionContext { stack: Vec::new() };
 
 
-    let mut ctx = ExecutionContext{
-        stack: Vec::new()
-    };
-
-    let binding = compile_result.unwrap().unwrap();
-    let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> = Ok(Some(&binding));
+    let mut running_instruction: Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> = Ok(Some(instruction));
 
     loop {
         match running_instruction {
@@ -454,666 +443,196 @@ fn main() {
                 running_instruction = i.execute(&mut ctx);
             }
             Ok(None) => {
-                break;
+                return Ok(ctx);
             }
-            Err(_) => {
-                break;
+            Err(e) => {
+                return Err(e);
             }
         }
     }
+}
 
-    assert_eq!(ctx.stack.pop(), Some(5));
+pub fn run_script(parse_context: &mut ParseContext) -> Result<ExecutionContext, Box<dyn Error>> {
+
+    let parse_result = PrefixParslet::chain_parse(parse_context);
+
+    if parse_result.as_ref().is_err() {
+        println!("{}", parse_result.as_ref().err().unwrap());
+        return Err(Box::new(parse_result.as_ref().err().unwrap().clone()));
+    }
+
+    let compiler = parse_result.unwrap().unwrap();
+    let compile_result = compiler.borrow().compile(&mut CompileContext {}, None);
+
+    if compile_result.is_err() {
+    }
+
+    let instruction = match compile_result {
+        Ok(None) => {
+            return Ok(ExecutionContext{ stack: vec![] });
+        },
+        Ok(cr) => {
+            cr.unwrap()
+        },
+        Err(e) => {
+            return Err(Box::new(e));
+        }
+    };
+
+    execute_instructions(instruction)
+}
+
+fn main() {
+    let args = Args::parse();
+
+    let input: Box<dyn LexxInput> = if args.file != "" {
+        let file = File::open(args.file).unwrap();
+        Box::new(InputReader::new(file))
+    } else if args.raw != "" {
+        Box::new(InputString::new(args.raw))
+    } else {
+        let input_stdin = InputReader::new(stdin());
+        Box::new(input_stdin)
+    };
+
+    let mut pc = make_parse_context(input);
+
+    let run_result = run_script(&mut pc);
+
+    let mut ctx = match run_result {
+        Ok(ctx) => {
+            ctx
+        }
+        Err(e) => {
+            println!("{}", e);
+            return;
+        }
+    };
+
+    loop {
+        match ctx.stack.pop() {
+            None => {
+                return
+            }
+            Some(i) => {
+                println!("{}", i)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::error::Error;
-
     use lexx::input::InputString;
-    use lexx::Lexx;
-    use lexx::matcher_exact::ExactMatcher;
-    use lexx::matcher_integer::IntegerMatcher;
-    use lexx::matcher_symbol::SymbolMatcher;
-    use lexx::matcher_whitespace::WhitespaceMatcher;
-    use lexx::token::{Token, TOKEN_TYPE_INTEGER, TOKEN_TYPE_SYMBOL};
 
-    use crate::{
-        make_infix_compiler, make_infix_compiler_function, make_prefix_compiler,
-        TOKEN_TYPE_OPERATOR,
-    };
-    use crate::compiler::{CompileContext, CompilerStruct};
-    use crate::instruction::{
-        AddInstruction, DivideInstruction, ExecutionContext, Instruction, MultiplyInstruction,
-        StaticIntInstruction, SubtractInstruction,
-    };
-    use crate::parser::{ParseContext, Parser, PRECEDENCE_PRODUCT, PRECEDENCE_SUM};
-    use crate::parslet::{InfixParslet, PrefixParslet};
+    use crate::{make_parse_context, run_script};
 
     #[test]
-    fn simple_math_test() {
-        pub struct SimpleStaticIntInstruction {
-            pub value: i32,
-            pub next: Option<Box<dyn Instruction>>,
-        }
-        impl Instruction for SimpleStaticIntInstruction {
-            fn execute(
-                &self,
-                ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-                ctx.stack.push(self.value);
-                Ok(self.next.as_ref())
-            }
-        }
+    fn test_basic_parse_and_execute() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1"))));
 
-        pub struct SimpleMathInstruction {
-            pub instruction: char,
-            pub next: Option<Box<dyn Instruction>>,
-        }
-        impl Instruction for SimpleMathInstruction {
-            fn execute(
-                &self,
-                ctx: &mut ExecutionContext,
-            ) -> Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> {
-                let right = ctx.stack.pop().unwrap();
-                let left = ctx.stack.pop().unwrap();
-                match self.instruction {
-                    '+' => {
-                        ctx.stack.push(left + right);
-                    }
-                    '-' => {
-                        ctx.stack.push(left - right);
-                    }
-                    _ => {}
-                }
-                Ok(self.next.as_ref())
-            }
-        }
+        let ctx = run_script(&mut pc);
 
-        let simple_int_parslet = PrefixParslet {
-            matcher: |_ctx, token| {
-                if token.token_type == TOKEN_TYPE_INTEGER {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |_ctx, token| {
-                Ok(Some(Box::new(CompilerStruct {
-                    left: None,
-                    right: None,
-                    next: None,
-                    compiler_type: 0,
-                    token: token.clone(),
-                    compile: |_ctx: &mut CompileContext,
-                              compiler: &CompilerStruct,
-                              next: Option<Box<dyn Instruction>>| {
-                        Ok(Some(Box::new(SimpleStaticIntInstruction {
-                            value: compiler.token.value.parse::<i32>().unwrap(),
-                            next,
-                        })))
-                    },
-                })))
-            },
-        };
-
-        let simple_operator_parslet = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT && token.token_type == TOKEN_TYPE_SYMBOL {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(Some(Box::new(CompilerStruct {
-                    next: None,
-                    compiler_type: 0,
-                    left: left.as_ref().map(|l: &Box<CompilerStruct>| l.clone()),
-                    right: right.map(|r: Box<CompilerStruct>| r),
-                    token: token.clone(),
-                    compile: |ctx: &mut CompileContext,
-                              compiler: &CompilerStruct,
-                              next: Option<Box<dyn Instruction>>| {
-                        let i = Box::new(SimpleMathInstruction {
-                            instruction: compiler.token.value.chars().next().unwrap(),
-                            next,
-                        });
-                        let r = (compiler.right.as_ref().unwrap().compile)(
-                            ctx,
-                            compiler.right.as_ref().unwrap(),
-                            Some(i),
-                        )?;
-                        let l = (compiler.left.as_ref().unwrap().compile)(
-                            ctx,
-                            compiler.left.as_ref().unwrap(),
-                            r,
-                        )?;
-                        Ok(Some(l.unwrap()))
-                    },
-                })))
-            },
-        };
-
-        let lexx = Box::new(Lexx::<512>::new(
-            Box::new(InputString::new(String::from("3 + 2".to_string()))),
-            vec![
-                Box::new(IntegerMatcher {
-                    index: 0,
-                    precedence: 0,
-                    running: true,
-                }),
-                Box::new(WhitespaceMatcher {
-                    index: 0,
-                    column: 0,
-                    line: 0,
-                    precedence: 0,
-                    running: true,
-                }),
-                Box::new(SymbolMatcher {
-                    index: 0,
-                    precedence: 0,
-                    running: true,
-                }),
-            ],
-        ));
-
-        let mut simple_parse_context: ParseContext = ParseContext {
-            lexx: lexx,
-            prefix: vec![simple_int_parslet],
-            infix: vec![simple_operator_parslet],
-            script: "test.txt".to_string(),
-        };
-
-        simple_parse_context
-            .lexx
-            .set_input(Box::new(InputString::new(String::from(
-                "3 - 2 + 4".to_string(),
-            ))));
-
-        let parse_result = Parser::parse(&mut simple_parse_context, &None, 0);
-
-        let compiler = parse_result.unwrap().unwrap();
-        let compile_result = (compiler.compile)(&mut CompileContext {}, &compiler, None);
-
-        let mut ctx = ExecutionContext { stack: Vec::new() };
-
-        let binding = compile_result.unwrap().unwrap();
-        let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> =
-            Ok(Some(&binding));
-
-        loop {
-            match running_instruction {
-                Ok(Some(i)) => {
-                    running_instruction = i.execute(&mut ctx);
-                }
-                Ok(None) => {
-                    break;
-                }
-                Err(_) => {
-                    break;
-                }
-            }
-        }
-
-        assert_eq!(ctx.stack.pop(), Some(5));
+        assert_eq!(ctx.unwrap().stack.pop(), Some(1));
     }
 
     #[test]
-    fn math_test() {
-        let script_parser = PrefixParslet {
-            matcher: |_ctx, _token| true,
-            generator: |ctx, token| {
-                let next = PrefixParslet::chain_parse(ctx)?;
-                Ok(Some(Box::new(CompilerStruct {
-                    left: None,
-                    right: None,
-                    next: next,
-                    token: token.clone(),
-                    compiler_type: 0,
-                    compile: |ctx: &mut CompileContext,
-                              compiler: &CompilerStruct,
-                              _next: Option<Box<dyn Instruction>>| {
-                        match &compiler.next {
-                            None => Ok(None),
-                            Some(c) => Ok(CompilerStruct::fold_left_compile(ctx, Some(c.clone()))?),
-                        }
-                    },
-                })))
-            },
-        };
+    fn test_basic_addition() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 + 2"))));
 
-        let sub_parser = PrefixParslet {
-            matcher: |_ctx, token| {
-                if token.token_type == TOKEN_TYPE_OPERATOR && "(" == token.value {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, _token| {
-                return PrefixParslet::chain_parse_until_token(
-                    ctx,
-                    &Token {
-                        value: ")".to_string(),
-                        token_type: TOKEN_TYPE_OPERATOR,
-                        len: 0,
-                        line: 0,
-                        column: 0,
-                        precedence: 0,
-                    },
-                );
-            },
-        };
+        let ctx = run_script(&mut pc);
 
-        let div_operator = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_OPERATOR
-                    && "/" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(DivideInstruction)
-                ))
-            },
-        };
-        let minus_operator = InfixParslet {
-            precedence: PRECEDENCE_SUM,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_SUM
-                    && token.token_type == TOKEN_TYPE_OPERATOR
-                    && "-" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(SubtractInstruction)
-                ))
-            },
-        };
-        let mult_operator = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_OPERATOR
-                    && "*" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(MultiplyInstruction)
-                ))
-            },
-        };
-        let plus_operator = InfixParslet {
-            precedence: PRECEDENCE_SUM,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_SUM
-                    && token.token_type == TOKEN_TYPE_OPERATOR
-                    && "+" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(AddInstruction)
-                ))
-            },
-        };
-
-        let int_parslet = PrefixParslet {
-            matcher: |_ctx, token| {
-                if token.token_type == TOKEN_TYPE_INTEGER {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |_ctx, token| {
-                Ok(make_prefix_compiler!(
-                    0,
-                    token,
-                    |_ctx: &mut CompileContext,
-                     compiler: &CompilerStruct,
-                     next: Option<Box<dyn Instruction>>| {
-                        Ok(Some(Box::new(StaticIntInstruction {
-                            value: compiler.token.value.parse::<i32>().unwrap(),
-                            next,
-                        })))
-                    }
-                ))
-            },
-        };
-
-        let mut parse_context: ParseContext = ParseContext {
-            lexx: Box::new(Lexx::<512>::new(
-                Box::new(InputString::new(String::from("3+2".to_string()))),
-                vec![
-                    Box::new(IntegerMatcher {
-                        index: 0,
-                        precedence: 0,
-                        running: true,
-                    }),
-                    Box::new(WhitespaceMatcher {
-                        index: 0,
-                        column: 0,
-                        line: 0,
-                        precedence: 0,
-                        running: true,
-                    }),
-                    Box::new(ExactMatcher::build_exact_matcher(
-                        vec!["+", "-", "*", "/", "(", ")"],
-                        TOKEN_TYPE_OPERATOR,
-                        1,
-                    )),
-                ],
-            )),
-            prefix: vec![int_parslet, sub_parser],
-            infix: vec![plus_operator, minus_operator, mult_operator, div_operator],
-            script: "test.txt".to_string(),
-        };
-
-        let token = Token {
-            value: "".to_string(),
-            token_type: 0,
-            len: 0,
-            line: 0,
-            column: 0,
-            precedence: 0,
-        };
-
-        //parse_context.lexx.set_input(Box::new(InputString::new(String::from("(2 + 3) * 4".to_string()))));
-        parse_context
-            .lexx
-            .set_input(Box::new(InputString::new(String::from(
-                "(1 + (2 + 3) * 4 - 5) * 9 / 3 (1 +1) 2*5".to_string(),
-            ))));
-
-        let result2 = script_parser.parse(&mut parse_context, &token, &None, 0); //Parser::parse(&mut parse_context, &None, 0);
-
-        let compiler = result2.unwrap().unwrap();
-        let compile_result = (compiler.compile)(&mut CompileContext {}, &compiler, None);
-
-        let mut ctx = ExecutionContext { stack: Vec::new() };
-
-        let binding = compile_result.unwrap().unwrap();
-        let mut running_instruction: Result<Option<&Box<dyn Instruction>>, Box<dyn Error>> =
-            Ok(Some(&binding));
-
-        loop {
-            match running_instruction {
-                Ok(Some(i)) => {
-                    running_instruction = i.execute(&mut ctx);
-                }
-                Ok(None) => {
-                    break;
-                }
-                Err(_) => {
-                    break;
-                }
-            }
-        }
-
-        println!();
-        print!("{}", ctx.stack.pop().unwrap());
-        while !ctx.stack.is_empty() {
-            print!(", {}", ctx.stack.pop().unwrap());
-        }
-        println!();
+        assert_eq!(ctx.unwrap().stack.pop(), Some(3));
     }
 
     #[test]
-    fn complex_math_test() {
-        let script_parser = PrefixParslet {
-            matcher: |_ctx, _token| true,
-            generator: |ctx, token| {
-                let next = PrefixParslet::chain_parse(ctx)?;
-                Ok(Some(Box::new(CompilerStruct {
-                    left: None,
-                    right: None,
-                    next: next,
-                    token: token.clone(),
-                    compiler_type: 0,
-                    compile: |ctx: &mut CompileContext,
-                              compiler: &CompilerStruct,
-                              _next: Option<Box<dyn Instruction>>| {
-                        match &compiler.next {
-                            None => Ok(None),
-                            Some(c) => Ok(CompilerStruct::fold_left_compile(ctx, Some(c.clone()))?),
-                        }
-                    },
-                })))
-            },
-        };
+    fn test_basic_precedence() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 + 2 * 3"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(7));
 
-        let div_operator = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_SYMBOL
-                    && "/" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(DivideInstruction)
-                ))
-            },
-        };
-        let minus_operator = InfixParslet {
-            precedence: PRECEDENCE_SUM,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_SUM
-                    && token.token_type == TOKEN_TYPE_SYMBOL
-                    && "-" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(SubtractInstruction)
-                ))
-            },
-        };
-        let mult_operator = InfixParslet {
-            precedence: PRECEDENCE_PRODUCT,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_PRODUCT
-                    && token.token_type == TOKEN_TYPE_SYMBOL
-                    && "*" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(MultiplyInstruction)
-                ))
-            },
-        };
-        let plus_operator = InfixParslet {
-            precedence: PRECEDENCE_SUM,
-            matcher: |_ctx, token, precedence| {
-                if precedence < PRECEDENCE_SUM
-                    && token.token_type == TOKEN_TYPE_SYMBOL
-                    && "+" == token.value
-                {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |ctx, token, left, precedence| {
-                let right = Parser::parse(ctx, left, precedence)?;
-                Ok(make_infix_compiler!(
-                    0,
-                    token,
-                    left,
-                    right,
-                    make_infix_compiler_function!(AddInstruction)
-                ))
-            },
-        };
-
-        let int_parslet = PrefixParslet {
-            matcher: |_ctx, token| {
-                if token.token_type == TOKEN_TYPE_INTEGER {
-                    true
-                } else {
-                    false
-                }
-            },
-            generator: |_ctx, token| {
-                Ok(make_prefix_compiler!(
-                    0,
-                    token,
-                    |_ctx: &mut CompileContext,
-                     compiler: &CompilerStruct,
-                     next: Option<Box<dyn Instruction>>| {
-                        Ok(Some(Box::new(StaticIntInstruction {
-                            value: compiler.token.value.parse::<i32>().unwrap(),
-                            next,
-                        })))
-                    }
-                ))
-            },
-        };
-
-        let mut parse_context: ParseContext = ParseContext {
-            lexx: Box::new(Lexx::<512>::new(
-                Box::new(InputString::new(String::from("3+2".to_string()))),
-                vec![
-                    Box::new(IntegerMatcher {
-                        index: 0,
-                        precedence: 0,
-                        running: true,
-                    }),
-                    Box::new(WhitespaceMatcher {
-                        index: 0,
-                        column: 0,
-                        line: 0,
-                        precedence: 0,
-                        running: true,
-                    }),
-                    Box::new(SymbolMatcher {
-                        index: 0,
-                        precedence: 0,
-                        running: true,
-                    }),
-                ],
-            )),
-            prefix: vec![int_parslet],
-            infix: vec![plus_operator, minus_operator, mult_operator, div_operator],
-            script: "test.txt".to_string(),
-        };
-
-        let token = Token {
-            value: "".to_string(),
-            token_type: 0,
-            len: 0,
-            line: 0,
-            column: 0,
-            precedence: 0,
-        };
-
-        parse_context
-            .lexx
-            .set_input(Box::new(InputString::new(String::from(
-                "2 + 3 * 4 - 5 * 9 / 3 1 +1 2*5".to_string(),
-            ))));
-
-        let result2 = script_parser.parse(&mut parse_context, &token, &None, 0); //Parser::parse(&mut parse_context, &None, 0);
-
-        let compiler = result2.unwrap().unwrap();
-        let compile_result = (compiler.compile)(&mut CompileContext {}, &compiler, None);
-
-        let mut ctx = ExecutionContext { stack: Vec::new() };
-
-        let mut instruction = compile_result
-            .as_ref()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .execute(&mut ctx);
-        loop {
-            match instruction {
-                Ok(Some(i)) => {
-                    instruction = i.execute(&mut ctx);
-                }
-                Ok(None) => {
-                    break;
-                }
-                Err(_) => {
-                    break;
-                }
-            }
-        }
-
-        assert_eq!(ctx.stack.pop(), Some(10));
-        assert_eq!(ctx.stack.pop(), Some(2));
-        assert_eq!(ctx.stack.pop(), Some(-1));
+        pc.lexx.set_input(Box::new(InputString::new(String::from("2 * 3 + 1"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(7));
     }
+
+    #[test]
+    fn test_basic_sub() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("(1 + 2) * 3"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(9));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("2 * (3 + 1)"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(8));
+    }
+
+    #[test]
+    fn test_basic_sub_sub() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("(6+((2 * (3 + 1))/2))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(10));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("((((3 + 1))))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(4));
+    }
+
+    #[test]
+    fn test_prefix_negate() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("-1"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-1));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("3 * -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-15));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("-3 * -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(15));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("-3 + -5"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(-8));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(6+(-(2 * (3 + 1))/-2))"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(10));
+    }
+
+    #[test]
+    fn test_ternary_branch() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1 ? 1 : 0"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(1));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("0 ? 1 : 0"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(0));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("1 + (-1) ? (3 * 6 + 1) : (5 * 2) + 2"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(22));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(1 + -1) ? (3 * 6 + 1) : (5 * 2) + 2"))));
+        let ctx = run_script(&mut pc);
+        assert_eq!(ctx.unwrap().stack.pop(), Some(12));
+    }
+
+    #[test]
+    fn test_chaining_expressions() {
+        let mut pc = make_parse_context(Box::new(InputString::new(String::from("1+2 3 + 4 5+6 "))));
+        let mut ctx = run_script(&mut pc);
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(11));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(7));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(3));
+
+        pc.lexx.set_input(Box::new(InputString::new(String::from("(1+2); -(3 + 4) (5+6)"))));
+        let mut ctx = run_script(&mut pc);
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(11));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(-7));
+        assert_eq!(ctx.as_mut().unwrap().stack.pop(), Some(3));
+    }
+
 }

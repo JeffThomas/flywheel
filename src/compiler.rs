@@ -1,6 +1,12 @@
+use std::cell::RefCell;
+use std::error::Error;
+use std::fmt;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use lexx::token::Token;
 
-use crate::instruction::{Instruction, StaticIntInstruction};
+use crate::instruction::Instruction;
 
 pub struct CompileContext {}
 
@@ -9,111 +15,77 @@ pub enum CompileError {
     Error(String),
 }
 
-pub trait Compiler {
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CompileError::Error(m) => write!(f, "{}", m),
+        }
+    }
+}
+
+impl Error for CompileError {
+    #[allow(deprecated)]
+    fn description(&self) -> &str {
+        match *self {
+            CompileError::Error(..) => "a compile error occurred",
+        }
+    }
+}
+
+pub trait Compiler: {
     fn compile(
         &self,
         ctx: &mut CompileContext,
-        next: Option<Box<dyn Instruction>>,
-    ) -> Result<Option<Box<dyn Instruction>>, CompileError>;
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError>;
     fn get_type(&self) -> u8;
     fn get_token(&self) -> Token;
 }
 
-pub struct CompilerInt {
-    pub next: Option<Box<dyn Compiler>>,
+
+pub struct EmptyExpressionCompiler {
+    pub next: Option<Rc<RefCell<dyn Compiler>>>,
+    pub expression: Option<Rc<RefCell<dyn Compiler>>>,
     pub token: Token,
     pub compiler_type: u8,
 }
+impl Compiler for EmptyExpressionCompiler {
+    fn compile(
+        &self,
+        _ctx: &mut CompileContext,
+        _next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        Ok(None)
+    }
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
+}
 
-impl Compiler for CompilerInt {
+pub struct ExpressionCompiler {
+    pub next: Option<Rc<RefCell<dyn Compiler>>>,
+    pub expression: Option<Rc<RefCell<dyn Compiler>>>,
+    pub token: Token,
+    pub compiler_type: u8,
+}
+impl Compiler for ExpressionCompiler {
     fn compile(
         &self,
         ctx: &mut CompileContext,
-        next: Option<Box<dyn Instruction>>,
-    ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
-        Ok(Some(Box::new(StaticIntInstruction {
-            value: self.token.value.parse::<i32>().unwrap(),
-            next,
-        })))
-    }
-    fn get_type(&self) -> u8 {
-        self.compiler_type
-    }
-    fn get_token(&self) -> Token {
-        self.token.clone()
-    }
-}
-
-#[derive(Clone)]
-pub struct CompilerStruct {
-    pub left: Option<Box<CompilerStruct>>,
-    pub right: Option<Box<CompilerStruct>>,
-    pub next: Option<Box<CompilerStruct>>,
-    pub token: Token,
-    pub compiler_type: u8,
-    pub compile: fn(
-        ctx: &mut CompileContext,
-        compiler: &CompilerStruct,
-        next: Option<Box<dyn Instruction>>,
-    ) -> Result<Option<Box<dyn Instruction>>, CompileError>,
-}
-
-impl CompilerStruct {
-    pub fn fold_left_compile(
-        ctx: &mut CompileContext,
-        compiler: Option<Box<CompilerStruct>>,
-    ) -> Result<Option<Box<dyn Instruction>>, CompileError> {
-        match compiler {
-            None => Ok(None),
-            Some(c) => {
-                let next = CompilerStruct::fold_left_compile(ctx, c.next.clone())?;
-                (c.compile)(ctx, &c, next)
+        next: Option<Arc<dyn Instruction>>,
+    ) -> Result<Option<Arc<dyn Instruction>>, CompileError> {
+        let n = match self.next {
+            Some(ref n) => {n.borrow().compile(ctx, next)?}
+            None => {next}
+        };
+        match &self.expression {
+            None => {
+                Ok(None)
+            }
+            Some(e) => {
+                Ok(e.as_ref().borrow().compile(ctx, n)?)
             }
         }
     }
-}
-
-#[macro_export]
-macro_rules! make_prefix_compiler {
-    ( $c_type:expr, $token:expr, $compiler:expr ) => {
-        Some(Box::new(CompilerStruct {
-            left: None,
-            right: None,
-            next: None,
-            token: $token.clone(),
-            compiler_type: $c_type,
-            compile: $compiler,
-        }))
-    };
-}
-
-#[macro_export]
-macro_rules! make_infix_compiler_function {
-    ( $instruction:ident ) => {
-        |ctx: &mut CompileContext, compiler: &CompilerStruct, next: Option<Box<dyn Instruction>>| {
-            let i = Box::new($instruction { next });
-            let r = (compiler.right.as_ref().unwrap().compile)(
-                ctx,
-                compiler.right.as_ref().unwrap(),
-                Some(i),
-            )?;
-            let l =
-                (compiler.left.as_ref().unwrap().compile)(ctx, compiler.left.as_ref().unwrap(), r)?;
-            Ok(Some(l.unwrap()))
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! make_infix_compiler {
-    ( $c_type:expr, $token:expr, $left:expr, $right:expr, $compiler:expr ) => {
-        Some(Box::new(CompilerStruct {
-            left: $left.as_ref().map(|l: &Box<CompilerStruct>| l.clone()),
-            right: $right.map(|r: Box<CompilerStruct>| r),
-            next: None,
-            token: $token.clone(),
-            compiler_type: $c_type,
-            compile: $compiler,
-        }))
-    };
+    fn get_type(&self) -> u8 { self.compiler_type }
+    fn get_token(&self) -> Token { self.token.clone() }
 }

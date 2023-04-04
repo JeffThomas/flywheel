@@ -9,5 +9,10 @@ edition = "2021"
 name = "flywheel"
 path = "src/main.rs"
 
+[lib]
+name = "flywheel"
+path = "src/lib.rs"
+
 [dependencies]
 lexx = { git = "https://github.com/JeffThomas/lexx.git" }
+clap = { version = "4.0.25", features = ["derive"] }
