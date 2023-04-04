@@ -104,8 +104,8 @@ fn main() {
             let bi = Arc::new(
                 BranchingInstruction {
                     instruction: self.token.value.chars().next().unwrap(),
-                    then_branch: tb,
-                    else_branch: eb
+                    true_branch: tb,
+                    false_branch: eb
                 } );
             let if_expression = self.if_expression.as_ref().unwrap().borrow().compile(ctx, Some(bi))?;
             Ok(Some(if_expression.unwrap()))
@@ -116,16 +116,16 @@ fn main() {
 
     pub struct BranchingInstruction {
         pub instruction: char,
-        pub then_branch: Option<Arc<dyn Instruction>>,
-        pub else_branch: Option<Arc<dyn Instruction>>,
+        pub true_branch: Option<Arc<dyn Instruction>>,
+        pub false_branch: Option<Arc<dyn Instruction>>,
     }
     impl Instruction for BranchingInstruction {
         fn execute(&self, ctx: &mut ExecutionContext) -> Result<Option<Arc<dyn Instruction>>, Box<dyn Error>> {
             let if_results = ctx.stack.pop().unwrap();
             if if_results == 0 {
-                return Ok(self.else_branch.clone())
+                return Ok(self.false_branch.clone())
             }
-            Ok(self.then_branch.clone())
+            Ok(self.true_branch.clone())
         }
     }
 

@@ -17,7 +17,7 @@ use flywheel::parslet::PrefixParslet;
 
 fn main() {
     // parslet for parsing a static integer
-    let simple_int_parslet = PrefixParslet {
+    let int_parslet = PrefixParslet {
         // the `matcher` function evaluates a token and decides if this parslet will parse it
         matcher: |_ctx, token| {
             if token.token_type == TOKEN_TYPE_INTEGER { true } else { false }
@@ -83,7 +83,7 @@ fn main() {
         lexx,
         // This contains all of the PrefixParslets to use
         prefix: vec![
-            simple_int_parslet,
+            int_parslet,
         ],
         // This would contain all of the PrefixParslets to use
         infix: vec![],
